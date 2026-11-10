@@ -1,0 +1,111 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const http_1 = __importDefault(require("http"));
+const express_1 = __importDefault(require("express"));
+const cors_1 = __importDefault(require("cors"));
+const cookie_parser_1 = __importDefault(require("cookie-parser"));
+const dotenv_1 = __importDefault(require("dotenv"));
+dotenv_1.default.config();
+const socket_1 = require("./socket");
+const db_1 = require("./lib/db");
+const auth_1 = __importDefault(require("./routes/auth"));
+const matches_1 = __importDefault(require("./routes/matches"));
+const players_1 = __importDefault(require("./routes/players"));
+const teams_1 = __importDefault(require("./routes/teams"));
+const admin_1 = __importDefault(require("./routes/admin"));
+const app = (0, express_1.default)();
+const server = http_1.default.createServer(app);
+const PORT = process.env.PORT || 5000;
+const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
+// Middleware
+app.use((0, cors_1.default)({
+    origin: (origin, callback) => {
+        // allow requests with no origin (like mobile apps, curl, or same-origin)
+        if (!origin || origin === CLIENT_URL || origin.startsWith('http://localhost:')) {
+            callback(null, true);
+        }
+        else {
+            callback(null, true); // permissive for local dev
+        }
+    },
+    credentials: true,
+}));
+app.use((0, cookie_parser_1.default)());
+app.use(express_1.default.json({ limit: '5mb' }));
+app.use(express_1.default.urlencoded({ extended: true }));
+// Health check
+app.get('/api', (_req, res) => {
+    res.json({ ok: true, message: 'Cricket Live API is running' });
+});
+// Route modules
+app.use('/api/auth', auth_1.default);
+app.use('/api/matches', matches_1.default);
+app.use('/api/players', players_1.default);
+app.use('/api/teams', teams_1.default);
+app.use('/api/admin', admin_1.default);
+// Fallback 404
+app.use('/api/*', (_req, res) => {
+    res.status(404).json({ ok: false, error: 'Endpoint not found' });
+});
+// Initialize Socket.IO
+(0, socket_1.initSocketServer)(server);
+async function start() {
+    try {
+        await (0, db_1.connectDB)();
+    }
+    catch (err) {
+        console.warn('> Warning: MongoDB connection failed on start. Queries will retry on demand.');
+    }
+    server.listen(PORT, () => {
+        console.log(`> Cricket Live Backend Server running on http://localhost:${PORT}`);
+        console.log(`> WebSocket server ready on ws://localhost:${PORT}`);
+    });
+}
+start();
+// Graceful shutdown
+const shutdown = async () => {
+    const { db } = await Promise.resolve().then(() => __importStar(require('./lib/db')));
+    await db.$disconnect();
+    server.close(() => {
+        console.log('Server shut down gracefully');
+        process.exit(0);
+    });
+};
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
