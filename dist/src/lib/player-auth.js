@@ -322,6 +322,7 @@ async function issuePlayerAuthCookies(res, user, player, req) {
         secure: isProd,
         path: '/',
     };
+    (0, auth_1.clearAdminSessionCookie)(res);
     res.cookie(exports.PLAYER_ACCESS_COOKIE, accessToken, {
         ...cookieOpts,
         maxAge: 2 * 60 * 60 * 1000,

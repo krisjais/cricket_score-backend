@@ -306,7 +306,7 @@ router.post('/claims/:id/resolve', async (req, res) => {
 
     let mergeResult: any = null
     if (claimantUser.playerId && claimantUser.playerId !== unclaimedPlayer._id) {
-      // Keep the registered player's permanent PLR ID and fold historical unclaimed records into it
+      // Keep the registered player profile and fold historical unclaimed records into it
       mergeResult = await mergePlayersAndRecalculate(
         unclaimedPlayer._id,
         claimantUser.playerId,

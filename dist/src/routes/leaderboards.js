@@ -63,7 +63,7 @@ router.get('/', async (req, res) => {
         const buckets = new Map();
         for (const st of matchStats) {
             const p = playerMap.get(st.playerId);
-            if (!p || p.privacy?.isPublic === false)
+            if (!p)
                 continue;
             let b = buckets.get(st.playerId);
             if (!b) {

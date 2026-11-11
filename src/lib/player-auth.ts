@@ -3,7 +3,7 @@ import { createHash, randomBytes, randomInt } from 'crypto'
 import { SignJWT, jwtVerify } from 'jose'
 import type { Request, Response } from 'express'
 import { OtpVerification, RefreshToken, User, Player } from './db'
-import { extractTokenFromRequest, secretKey } from './auth'
+import { clearAdminSessionCookie, extractTokenFromRequest, secretKey } from './auth'
 import type { OtpChannel, OtpPurpose } from '../models'
 
 export const PLAYER_ACCESS_COOKIE = 'cricket_player_access'
@@ -364,6 +364,8 @@ export async function issuePlayerAuthCookies(
     secure: isProd,
     path: '/',
   }
+
+  clearAdminSessionCookie(res)
 
   res.cookie(PLAYER_ACCESS_COOKIE, accessToken, {
     ...cookieOpts,

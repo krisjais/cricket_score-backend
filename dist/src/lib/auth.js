@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SESSION_DAYS = exports.ADMIN_COOKIE = void 0;
 exports.secretKey = secretKey;
 exports.extractTokenFromRequest = extractTokenFromRequest;
+exports.clearAdminSessionCookie = clearAdminSessionCookie;
 exports.createSessionToken = createSessionToken;
 exports.getSession = getSession;
 exports.requireAdmin = requireAdmin;
@@ -70,8 +71,15 @@ function extractTokenFromRequest(req, cookieName) {
     }
     return token;
 }
+function clearAdminSessionCookie(res) {
+    res.clearCookie(exports.ADMIN_COOKIE, {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+    });
+}
 async function createSessionToken(adminId, username) {
-    return new jose_1.SignJWT({ sub: adminId, username })
+    return new jose_1.SignJWT({ kind: 'admin_session', sub: adminId, username })
         .setProtectedHeader({ alg: 'HS256' })
         .setIssuedAt()
         .setExpirationTime(`${exports.SESSION_DAYS}d`)
@@ -83,7 +91,12 @@ async function getSession(req) {
         return null;
     try {
         const { payload } = await (0, jose_1.jwtVerify)(token, secretKey());
+        if (payload.kind !== 'admin_session')
+            return null;
         if (!payload.sub || typeof payload.username !== 'string')
+            return null;
+        const admin = await db_1.db.admin.findUnique({ where: { id: payload.sub } });
+        if (!admin || admin.username !== payload.username)
             return null;
         return { adminId: payload.sub, username: payload.username };
     }

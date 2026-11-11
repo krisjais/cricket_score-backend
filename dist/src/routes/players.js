@@ -29,7 +29,7 @@ router.get('/', async (req, res) => {
         return (0, api_utils_1.sendFail)(res, err?.message || 'Failed to list players', 500);
     }
 });
-// GET /api/players/search?q=... - Search players by name or permanent Player ID
+// GET /api/players/search?q=... - Search players by name
 router.get('/search', async (req, res) => {
     try {
         await (0, db_1.connectDB)();
@@ -44,10 +44,7 @@ router.get('/search', async (req, res) => {
         if (claimed === 'false')
             filter.isClaimed = false;
         if (q) {
-            filter.$or = [
-                { name: { $regex: q, $options: 'i' } },
-                { playerCode: { $regex: q, $options: 'i' } },
-            ];
+            filter.name = { $regex: q, $options: 'i' };
         }
         const [players, teams, careerDocs] = await Promise.all([
             db_1.Player.find(filter).sort({ createdAt: -1 }).limit(200).lean(),
@@ -73,7 +70,7 @@ router.get('/search', async (req, res) => {
         return (0, api_utils_1.sendFail)(res, err?.message || 'Failed to search players', 500);
     }
 });
-// GET /api/players/public/:playerCodeOrId - Privacy-safe public profile (supports PLR-... or UUID)
+// GET /api/players/public/:playerCodeOrId - Privacy-safe public profile
 router.get('/public/:playerCodeOrId', async (req, res) => {
     try {
         await (0, db_1.connectDB)();
@@ -89,18 +86,6 @@ router.get('/public/:playerCodeOrId', async (req, res) => {
             const target = await db_1.Player.findById(player.mergedIntoPlayerId).lean();
             if (target)
                 player = target;
-        }
-        if (player.privacy?.isPublic === false) {
-            return (0, api_utils_1.sendOk)(res, {
-                isPrivate: true,
-                player: {
-                    id: player._id,
-                    playerCode: player.playerCode,
-                    name: player.name,
-                    isVerified: Boolean(player.isVerified),
-                    privacy: player.privacy,
-                },
-            });
         }
         let career = await db_1.PlayerCareerStat.findOne({ playerId: player._id }).lean();
         if (!career) {
@@ -165,8 +150,8 @@ router.get('/public/:playerCodeOrId', async (req, res) => {
                 tournament: tr ? { id: tr._id, name: tr.name, shortName: tr.shortName } : null,
             };
         });
-        const privacy = player.privacy ?? {
-            showDob: false,
+        const publicPrivacy = {
+            showDob: true,
             showCity: true,
             showBio: true,
             showSeasonHistory: true,
@@ -186,21 +171,17 @@ router.get('/public/:playerCodeOrId', async (req, res) => {
             isClaimed: Boolean(player.isClaimed),
             isVerified: Boolean(player.isVerified),
             status: player.status ?? 'ACTIVE',
-            dob: privacy.showDob ? player.dob ?? null : null,
-            city: privacy.showCity ? player.city ?? null : null,
-            bio: privacy.showBio ? player.bio ?? null : null,
-            privacy,
+            dob: player.dob ?? null,
+            city: null,
+            bio: player.bio ?? null,
+            privacy: publicPrivacy,
         };
         return (0, api_utils_1.sendOk)(res, {
             isPrivate: false,
             player: publicPlayer,
             currentMembership,
-            memberships: privacy.showSeasonHistory ? enrichedMemberships : [],
-            career: privacy.showSeasonHistory
-                ? career
-                : career
-                    ? { ...career, seasonBreakdown: [] }
-                    : null,
+            memberships: enrichedMemberships,
+            career,
             recentMatches,
             awards,
         });
@@ -233,12 +214,11 @@ router.post('/', async (req, res) => {
         ? Math.floor(Number(body.jerseyNumber))
         : null;
     const avatarUrl = body.avatarUrl?.trim() || null;
-    const playerCode = await (0, bootstrap_1.generateNextPlayerCode)();
     const player = await db_1.db.player.create({
         data: {
             teamId,
             name,
-            playerCode,
+            playerCode: null,
             role,
             gender,
             jerseyNumber,
@@ -650,11 +630,10 @@ router.post('/import', async (req, res) => {
                 updatedCount++;
             }
             else {
-                const playerCode = await (0, bootstrap_1.generateNextPlayerCode)();
                 const created = await db_1.db.player.create({
                     data: {
                         name,
-                        playerCode,
+                        playerCode: null,
                         role,
                         gender,
                         jerseyNumber: jNum,

@@ -1261,7 +1261,8 @@ export async function mergePlayersAndRecalculate(
         reason,
         beforeSummary,
         afterSummary: {
-          mergedInto: target.playerCode,
+          mergedInto: target.name,
+          mergedIntoPlayerId: targetPlayerId,
           impactedMatches: impactedMatchIds.size,
         },
       },

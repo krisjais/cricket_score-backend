@@ -1,36 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.generateNextPlayerCode = generateNextPlayerCode;
 exports.ensureDefaultSeasonAndTournament = ensureDefaultSeasonAndTournament;
 exports.ensureActiveMembershipForPlayer = ensureActiveMembershipForPlayer;
 exports.ensurePlayerSystemBootstrap = ensurePlayerSystemBootstrap;
 const db_1 = require("./db");
-/**
- * Generate a unique, permanent player code such as PLR-2026-000125.
- * Uses an atomic MongoDB Counter document per year so concurrent creations never collide.
- */
-async function generateNextPlayerCode(year = new Date().getFullYear()) {
-    await (0, db_1.connectDB)();
-    const counterId = `player_code_${year}`;
-    // Sync counter baseline once if manual/imported codes already exist
-    for (let attempt = 0; attempt < 5; attempt++) {
-        const counter = await db_1.Counter.findOneAndUpdate({ _id: counterId }, { $inc: { seq: 1 } }, { upsert: true, new: true });
-        const seq = counter?.seq ?? 1;
-        const code = `PLR-${year}-${String(seq).padStart(6, '0')}`;
-        const existing = await db_1.Player.findOne({ playerCode: code }).select({ _id: 1 }).lean();
-        if (!existing) {
-            return code;
-        }
-    }
-    // Defensive fallback if counter trailed behind high manual sequence
-    const latest = await db_1.Player.find({ playerCode: { $regex: `^PLR-${year}-\\d+$` } })
-        .sort({ playerCode: -1 })
-        .limit(1)
-        .lean();
-    const maxSeq = latest[0]?.playerCode ? Number(latest[0].playerCode.split('-')[2] || 0) : 0;
-    const bumped = await db_1.Counter.findOneAndUpdate({ _id: counterId }, { $max: { seq: maxSeq + 1 } }, { upsert: true, new: true });
-    return `PLR-${year}-${String((bumped?.seq ?? maxSeq + 1)).padStart(6, '0')}`;
-}
 /**
  * Ensure there is always an active default Season and default Tournament so matches,
  * memberships, and players created through existing flows have clean season anchors.
@@ -119,17 +92,12 @@ async function ensurePlayerSystemBootstrap() {
         try {
             await (0, db_1.connectDB)();
             const { season, tournament } = await ensureDefaultSeasonAndTournament();
-            // 1. Backfill permanent playerCode for any existing player missing it
-            const missingCodePlayers = await db_1.Player.find({
-                $or: [{ playerCode: null }, { playerCode: { $exists: false } }, { playerCode: '' }],
-            }).sort({ createdAt: 1 });
-            for (const p of missingCodePlayers) {
-                const year = p.createdAt ? new Date(p.createdAt).getFullYear() : new Date().getFullYear();
-                p.playerCode = await generateNextPlayerCode(year);
-                if (typeof p.isClaimed !== 'boolean')
-                    p.isClaimed = Boolean(p.userId);
-                if (!p.status)
-                    p.status = 'ACTIVE';
+            // 1. Clear legacy auto-generated playerCode values and ensure claim/status defaults
+            await db_1.Player.updateMany({ playerCode: { $ne: null } }, { $set: { playerCode: null } });
+            await db_1.Player.updateMany({ $or: [{ status: null }, { status: { $exists: false } }] }, { $set: { status: 'ACTIVE' } });
+            const missingClaimPlayers = await db_1.Player.find({ isClaimed: { $exists: false } }).select({ _id: 1, userId: 1 });
+            for (const p of missingClaimPlayers) {
+                p.isClaimed = Boolean(p.userId);
                 await p.save();
             }
             // 2. Backfill current TeamMembership rows for existing players with teamId

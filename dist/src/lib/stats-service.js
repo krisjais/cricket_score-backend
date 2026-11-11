@@ -1035,7 +1035,8 @@ async function mergePlayersAndRecalculate(sourcePlayerId, targetPlayerId, actor,
             reason,
             beforeSummary,
             afterSummary: {
-                mergedInto: target.playerCode,
+                mergedInto: target.name,
+                mergedIntoPlayerId: targetPlayerId,
                 impactedMatches: impactedMatchIds.size,
             },
         }, session);

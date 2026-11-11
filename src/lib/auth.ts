@@ -33,8 +33,16 @@ export function extractTokenFromRequest(req: Request, cookieName: string): strin
   return token
 }
 
+export function clearAdminSessionCookie(res: Response) {
+  res.clearCookie(ADMIN_COOKIE, {
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
+  })
+}
+
 export async function createSessionToken(adminId: string, username: string): Promise<string> {
-  return new SignJWT({ sub: adminId, username })
+  return new SignJWT({ kind: 'admin_session', sub: adminId, username })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime(`${SESSION_DAYS}d`)
@@ -53,7 +61,10 @@ export async function getSession(req: Request): Promise<AdminSession | null> {
 
   try {
     const { payload } = await jwtVerify(token, secretKey())
+    if (payload.kind !== 'admin_session') return null
     if (!payload.sub || typeof payload.username !== 'string') return null
+    const admin = await db.admin.findUnique({ where: { id: payload.sub } })
+    if (!admin || admin.username !== payload.username) return null
     return { adminId: payload.sub, username: payload.username }
   } catch {
     return null

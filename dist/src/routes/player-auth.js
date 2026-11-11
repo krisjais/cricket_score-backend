@@ -4,6 +4,7 @@ const express_1 = require("express");
 const db_1 = require("../lib/db");
 const api_utils_1 = require("../lib/api-utils");
 const bootstrap_1 = require("../lib/bootstrap");
+const player_dashboard_analytics_1 = require("../lib/player-dashboard-analytics");
 const player_auth_1 = require("../lib/player-auth");
 const stats_service_1 = require("../lib/stats-service");
 const router = (0, express_1.Router)();
@@ -290,12 +291,11 @@ router.post('/register', async (req, res) => {
                 dob = parsed;
         }
         const passwordHash = await (0, player_auth_1.hashPassword)(password);
-        const playerCode = await (0, bootstrap_1.generateNextPlayerCode)();
         await (0, bootstrap_1.ensureDefaultSeasonAndTournament)();
         const { user, player } = await (0, db_1.withMongoTransaction)(async (session) => {
             const [createdPlayer] = await db_1.Player.create([
                 {
-                    playerCode,
+                    playerCode: null,
                     name,
                     role,
                     gender,
@@ -577,14 +577,32 @@ router.get('/dashboard', async (req, res) => {
         const sess = await (0, player_auth_1.requirePlayer)(req);
         if (!sess)
             return (0, api_utils_1.sendFail)(res, 'Player authentication required', 401);
-        const [user, player, memberships, teams, seasons, tournaments, verifiedMatches] = await Promise.all([
+        const [user, player, memberships, teams, seasons, tournaments, verifiedMatches, activeMatches, awards, pendingClaims,] = await Promise.all([
             db_1.User.findById(sess.userId).lean(),
             db_1.Player.findById(sess.playerId).lean(),
             db_1.TeamMembership.find({ playerId: sess.playerId }).sort({ joinedAt: -1 }).lean(),
             db_1.Team.find({}).lean(),
             db_1.Season.find({}).lean(),
             db_1.Tournament.find({}).lean(),
-            db_1.Match.find({ scorecardStatus: 'VERIFIED' }).select({ _id: 1, format: 1, venue: 1 }).lean(),
+            db_1.Match.find({ status: 'COMPLETED', scorecardStatus: 'VERIFIED' })
+                .select({ _id: 1, format: 1, venue: 1 })
+                .lean(),
+            db_1.Match.find({ status: { $in: ['SCHEDULED', 'TOSS_DONE', 'LIVE', 'PAUSED', 'INNINGS_BREAK'] } })
+                .select({
+                _id: 1,
+                format: 1,
+                status: 1,
+                venue: 1,
+                matchDate: 1,
+                teamAId: 1,
+                teamBId: 1,
+                seasonId: 1,
+                tournamentId: 1,
+                playerStatuses: 1,
+            })
+                .lean(),
+            db_1.Award.find({ playerId: sess.playerId }).sort({ awardedAt: -1 }).lean(),
+            db_1.PlayerProfileClaim.find({ userId: sess.userId }).sort({ createdAt: -1 }).lean(),
         ]);
         if (!user || !player)
             return (0, api_utils_1.sendFail)(res, 'Player not found', 404);
@@ -629,38 +647,36 @@ router.get('/dashboard', async (req, res) => {
                 id: st._id,
                 format: mMeta?.format ?? 'T20',
                 venue: mMeta?.venue ?? null,
-                team: tm ? { id: tm._id, name: tm.name, shortName: tm.shortName, color: tm.color } : null,
-                opponent: opp ? { id: opp._id, name: opp.name, shortName: opp.shortName, color: opp.color } : null,
+                team: tm
+                    ? { id: tm._id, name: tm.name, shortName: tm.shortName, color: tm.color, logoUrl: tm.logoUrl ?? null }
+                    : null,
+                opponent: opp
+                    ? { id: opp._id, name: opp.name, shortName: opp.shortName, color: opp.color, logoUrl: opp.logoUrl ?? null }
+                    : null,
                 season: s ? { id: s._id, name: s.name, year: s.year } : null,
                 tournament: tr ? { id: tr._id, name: tr.name, shortName: tr.shortName } : null,
             };
         });
-        // Chronological graph time series
         const chronological = [...matchHistory].reverse();
-        let cumRuns = 0;
-        let cumBalls = 0;
-        let cumDismissals = 0;
-        const performanceSeries = chronological.map((m, idx) => {
-            cumRuns += m.batting.runs;
-            cumBalls += m.batting.balls;
-            if (m.batting.innings > 0 && !m.batting.notOut) {
-                cumDismissals += 1;
-            }
-            return {
-                matchIndex: idx + 1,
-                matchId: m.matchId,
-                label: `vs ${m.opponent?.shortName || 'OPP'}`,
-                date: m.matchDate,
-                runs: m.batting.runs,
-                balls: m.batting.balls,
-                wickets: m.bowling.wickets,
-                runsConceded: m.bowling.runsConceded,
-                cumulativeAverage: cumDismissals > 0 ? Number((cumRuns / cumDismissals).toFixed(2)) : cumRuns,
-                cumulativeStrikeRate: cumBalls > 0 ? Number(((cumRuns * 100) / cumBalls).toFixed(2)) : 0,
-            };
+        const performanceSeries = (0, player_dashboard_analytics_1.enrichPerformanceSeries)(chronological);
+        const seasonPerformance = (0, player_dashboard_analytics_1.computeSeasonPerformance)(matchHistory, seasonMap);
+        const personalBests = (0, player_dashboard_analytics_1.computePersonalBests)(matchHistory);
+        const achievements = (0, player_dashboard_analytics_1.computeEarnedAchievements)({
+            matchHistoryDesc: matchHistory,
+            career,
+            awards,
+            tournaments,
+            memberships,
+            seasonMap,
         });
-        const awards = await db_1.Award.find({ playerId: player._id }).sort({ awardedAt: -1 }).lean();
-        const pendingClaims = await db_1.PlayerProfileClaim.find({ userId: user._id }).sort({ createdAt: -1 }).lean();
+        const upcomingMatches = (0, player_dashboard_analytics_1.resolveUpcomingMatchesForPlayer)({
+            player,
+            memberships,
+            seasonMap,
+            tournamentMap,
+            teamMap,
+            activeMatches,
+        });
         return (0, api_utils_1.sendOk)(res, {
             user: sanitizeUser(user),
             player: { ...player, id: player._id },
@@ -669,6 +685,10 @@ router.get('/dashboard', async (req, res) => {
             career,
             matchHistory,
             performanceSeries,
+            seasonPerformance,
+            personalBests,
+            achievements,
+            upcomingMatches,
             awards,
             claims: pendingClaims,
         });
@@ -691,10 +711,7 @@ router.get('/claim-candidates', async (req, res) => {
             _id: { $ne: sess.playerId },
         };
         if (q) {
-            filter.$or = [
-                { name: { $regex: q, $options: 'i' } },
-                { playerCode: { $regex: q, $options: 'i' } },
-            ];
+            filter.name = { $regex: q, $options: 'i' };
         }
         const candidates = await db_1.Player.find(filter).sort({ createdAt: -1 }).limit(20).lean();
         const cIds = candidates.map((c) => c._id);

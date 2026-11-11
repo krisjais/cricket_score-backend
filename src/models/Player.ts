@@ -97,7 +97,7 @@ const PlayerSchema = new Schema<IPlayer>(
     },
     mergedIntoPlayerId: { type: String, default: null, ref: 'Player' },
     privacy: {
-      showDob: { type: Boolean, default: false },
+      showDob: { type: Boolean, default: true },
       showCity: { type: Boolean, default: true },
       showBio: { type: Boolean, default: true },
       showSeasonHistory: { type: Boolean, default: true },
