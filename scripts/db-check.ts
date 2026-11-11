@@ -1,5 +1,4 @@
-import dotenv from 'dotenv'
-dotenv.config()
+import '../src/lib/env'
 
 import { db, connectDB } from '../src/lib/db'
 

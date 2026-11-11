@@ -1,7 +1,21 @@
 import { Router } from 'express'
-import { db } from '../lib/db'
+import {
+  Award,
+  connectDB,
+  db,
+  Match,
+  Player,
+  PlayerCareerStat,
+  PlayerMatchStat,
+  Season,
+  Team,
+  TeamMembership,
+  Tournament,
+} from '../lib/db'
 import { requireAdmin } from '../lib/auth'
 import { sendOk, sendFail, unauthorized } from '../lib/api-utils'
+import { ensureActiveMembershipForPlayer, generateNextPlayerCode } from '../lib/bootstrap'
+import { mergePlayersAndRecalculate, rebuildCareerStatsForPlayers, writeAuditLog } from '../lib/stats-service'
 
 const router = Router()
 
@@ -28,7 +42,202 @@ router.get('/', async (req, res) => {
   }
 })
 
-// POST /api/players - Create a player
+// GET /api/players/search?q=... - Search players by name or permanent Player ID
+router.get('/search', async (req, res) => {
+  try {
+    await connectDB()
+    const q = String(req.query.q ?? '').trim()
+    const includeMerged = req.query.includeMerged === 'true'
+    const claimed = req.query.claimed as string | undefined
+
+    const filter: Record<string, any> = {}
+    if (!includeMerged) filter.status = { $ne: 'MERGED' }
+    if (claimed === 'true') filter.isClaimed = true
+    if (claimed === 'false') filter.isClaimed = false
+    if (q) {
+      filter.$or = [
+        { name: { $regex: q, $options: 'i' } },
+        { playerCode: { $regex: q, $options: 'i' } },
+      ]
+    }
+
+    const [players, teams, careerDocs] = await Promise.all([
+      Player.find(filter).sort({ createdAt: -1 }).limit(200).lean(),
+      Team.find({}).lean(),
+      PlayerCareerStat.find({}).lean(),
+    ])
+    const teamMap = new Map(teams.map((t) => [t._id, t]))
+    const careerMap = new Map(careerDocs.map((c) => [c.playerId, c]))
+
+    return sendOk(
+      res,
+      players.map((p) => {
+        const tm = p.teamId ? teamMap.get(p.teamId) : null
+        const c = careerMap.get(p._id)
+        return {
+          ...p,
+          id: p._id,
+          team: tm ? { id: tm._id, name: tm.name, shortName: tm.shortName, color: tm.color } : null,
+          careerSummary: c
+            ? { matches: c.matches, runs: c.runs, wickets: c.wickets, battingAverage: c.battingAverage, economy: c.economy }
+            : { matches: 0, runs: 0, wickets: 0, battingAverage: null, economy: 0 },
+        }
+      })
+    )
+  } catch (err: any) {
+    return sendFail(res, err?.message || 'Failed to search players', 500)
+  }
+})
+
+// GET /api/players/public/:playerCodeOrId - Privacy-safe public profile (supports PLR-... or UUID)
+router.get('/public/:playerCodeOrId', async (req, res) => {
+  try {
+    await connectDB()
+    const raw = String(req.params.playerCodeOrId ?? '').trim()
+    if (!raw) return sendFail(res, 'Player identifier required', 400)
+
+    let player = await Player.findOne({
+      $or: [{ playerCode: raw.toUpperCase() }, { _id: raw }],
+    }).lean()
+
+    if (!player) return sendFail(res, 'Player profile not found', 404)
+    if (player.status === 'MERGED' && player.mergedIntoPlayerId) {
+      const target = await Player.findById(player.mergedIntoPlayerId).lean()
+      if (target) player = target
+    }
+
+    if (player.privacy?.isPublic === false) {
+      return sendOk(res, {
+        isPrivate: true,
+        player: {
+          id: player._id,
+          playerCode: player.playerCode,
+          name: player.name,
+          isVerified: Boolean(player.isVerified),
+          privacy: player.privacy,
+        },
+      })
+    }
+
+    let career = await PlayerCareerStat.findOne({ playerId: player._id }).lean()
+    if (!career) {
+      await rebuildCareerStatsForPlayers([player._id])
+      career = await PlayerCareerStat.findOne({ playerId: player._id }).lean()
+    }
+
+    const [memberships, teams, seasons, tournaments, verifiedMatches, awards] = await Promise.all([
+      TeamMembership.find({ playerId: player._id }).sort({ joinedAt: -1 }).lean(),
+      Team.find({}).lean(),
+      Season.find({}).lean(),
+      Tournament.find({}).lean(),
+      Match.find({ scorecardStatus: 'VERIFIED' }).select({ _id: 1, format: 1, venue: 1 }).lean(),
+      Award.find({ playerId: player._id }).sort({ awardedAt: -1 }).lean(),
+    ])
+
+    const teamMap = new Map(teams.map((t) => [t._id, t]))
+    const seasonMap = new Map(seasons.map((s) => [s._id, s]))
+    const tournamentMap = new Map(tournaments.map((t) => [t._id, t]))
+    const verifiedMap = new Map(verifiedMatches.map((m) => [m._id, m]))
+
+    const enrichedMemberships = memberships
+      .map((m) => {
+        const s = seasonMap.get(m.seasonId)
+        const t = teamMap.get(m.teamId)
+        return {
+          id: m._id,
+          seasonId: m.seasonId,
+          teamId: m.teamId,
+          joinedAt: m.joinedAt,
+          status: m.status,
+          designation: m.designation,
+          season: s ? { id: s._id, name: s.name, code: s.code, year: s.year, status: s.status } : null,
+          team: t ? { id: t._id, name: t.name, shortName: t.shortName, color: t.color, logoUrl: t.logoUrl } : null,
+        }
+      })
+      .sort((a, b) => (b.season?.year ?? 0) - (a.season?.year ?? 0))
+
+    const currentMembership =
+      enrichedMemberships.find((m) => m.season?.status === 'ACTIVE' && m.status === 'ACTIVE') ??
+      enrichedMemberships[0] ??
+      null
+
+    const recentMatchStats =
+      verifiedMap.size > 0
+        ? await PlayerMatchStat.find({ playerId: player._id, matchId: { $in: [...verifiedMap.keys()] } })
+            .sort({ matchDate: -1 })
+            .limit(15)
+            .lean()
+        : []
+
+    const recentMatches = recentMatchStats.map((st) => {
+      const tm = teamMap.get(st.teamId)
+      const opp = teamMap.get(st.opponentTeamId)
+      const s = st.seasonId ? seasonMap.get(st.seasonId) : null
+      const tr = st.tournamentId ? tournamentMap.get(st.tournamentId) : null
+      return {
+        id: st._id,
+        matchId: st.matchId,
+        matchDate: st.matchDate,
+        result: st.result,
+        matchResultText: st.matchResultText,
+        isPlayerOfMatch: st.isPlayerOfMatch,
+        batting: st.batting,
+        bowling: st.bowling,
+        fielding: st.fielding,
+        team: tm ? { id: tm._id, name: tm.name, shortName: tm.shortName, color: tm.color } : null,
+        opponent: opp ? { id: opp._id, name: opp.name, shortName: opp.shortName, color: opp.color } : null,
+        season: s ? { id: s._id, name: s.name, year: s.year } : null,
+        tournament: tr ? { id: tr._id, name: tr.name, shortName: tr.shortName } : null,
+      }
+    })
+
+    const privacy = player.privacy ?? {
+      showDob: false,
+      showCity: true,
+      showBio: true,
+      showSeasonHistory: true,
+      isPublic: true,
+    }
+
+    // Strict public projection — never include email, mobile, userId, passwords or tokens
+    const publicPlayer = {
+      id: player._id,
+      playerCode: player.playerCode,
+      name: player.name,
+      role: player.role,
+      gender: player.gender,
+      jerseyNumber: player.jerseyNumber,
+      avatarUrl: player.avatarUrl ?? null,
+      battingStyle: player.battingStyle ?? null,
+      bowlingStyle: player.bowlingStyle ?? null,
+      isClaimed: Boolean(player.isClaimed),
+      isVerified: Boolean(player.isVerified),
+      status: player.status ?? 'ACTIVE',
+      dob: privacy.showDob ? player.dob ?? null : null,
+      city: privacy.showCity ? player.city ?? null : null,
+      bio: privacy.showBio ? player.bio ?? null : null,
+      privacy,
+    }
+
+    return sendOk(res, {
+      isPrivate: false,
+      player: publicPlayer,
+      currentMembership,
+      memberships: privacy.showSeasonHistory ? enrichedMemberships : [],
+      career: privacy.showSeasonHistory
+        ? career
+        : career
+          ? { ...career, seasonBreakdown: [] }
+          : null,
+      recentMatches,
+      awards,
+    })
+  } catch (err: any) {
+    return sendFail(res, err?.message || 'Failed to load public profile', 500)
+  }
+})
+
+// POST /api/players - Create a player (admin / scorer temp or full squad)
 router.post('/', async (req, res) => {
   const session = await requireAdmin(req)
   if (!session) return unauthorized(res)
@@ -57,9 +266,170 @@ router.post('/', async (req, res) => {
       : null
 
   const avatarUrl = body.avatarUrl?.trim() || null
+  const playerCode = await generateNextPlayerCode()
 
-  const player = await db.player.create({ data: { teamId, name, role, gender, jerseyNumber, avatarUrl } })
+  const player = await db.player.create({
+    data: {
+      teamId,
+      name,
+      playerCode,
+      role,
+      gender,
+      jerseyNumber,
+      avatarUrl,
+      battingStyle: ['RIGHT_HAND', 'LEFT_HAND'].includes(body.battingStyle) ? body.battingStyle : null,
+      bowlingStyle: typeof body.bowlingStyle === 'string' && body.bowlingStyle ? body.bowlingStyle : null,
+      isClaimed: false,
+      isVerified: Boolean(body.isVerified),
+      status: 'ACTIVE',
+    },
+  })
+
+  if (teamId) {
+    await ensureActiveMembershipForPlayer(player.id, teamId, body.seasonId || null, {
+      jerseyNumber,
+      assignedBy: session.username,
+    })
+  }
+
   return sendOk(res, player, 201)
+})
+
+// GET /api/players/:id/career - Career stats, memberships & match history (for admin / scorers)
+router.get('/:id/career', async (req, res) => {
+  try {
+    await connectDB()
+    const player = await Player.findOne({
+      $or: [{ _id: req.params.id }, { playerCode: req.params.id.toUpperCase() }],
+    }).lean()
+    if (!player) return sendFail(res, 'Player not found', 404)
+
+    let career = await PlayerCareerStat.findOne({ playerId: player._id }).lean()
+    if (!career) {
+      await rebuildCareerStatsForPlayers([player._id])
+      career = await PlayerCareerStat.findOne({ playerId: player._id }).lean()
+    }
+
+    const [memberships, matchStats, teams, seasons, tournaments] = await Promise.all([
+      TeamMembership.find({ playerId: player._id }).sort({ joinedAt: -1 }).lean(),
+      PlayerMatchStat.find({ playerId: player._id }).sort({ matchDate: -1 }).lean(),
+      Team.find({}).lean(),
+      Season.find({}).lean(),
+      Tournament.find({}).lean(),
+    ])
+    const tMap = new Map(teams.map((t) => [t._id, t]))
+    const sMap = new Map(seasons.map((s) => [s._id, s]))
+    const trMap = new Map(tournaments.map((t) => [t._id, t]))
+
+    return sendOk(res, {
+      player: { ...player, id: player._id },
+      career,
+      memberships: memberships.map((m) => ({
+        ...m,
+        id: m._id,
+        team: tMap.get(m.teamId) ?? null,
+        season: sMap.get(m.seasonId) ?? null,
+      })),
+      matchHistory: matchStats.map((st) => ({
+        ...st,
+        id: st._id,
+        team: tMap.get(st.teamId) ?? null,
+        opponent: tMap.get(st.opponentTeamId) ?? null,
+        season: st.seasonId ? sMap.get(st.seasonId) ?? null : null,
+        tournament: st.tournamentId ? trMap.get(st.tournamentId) ?? null : null,
+      })),
+    })
+  } catch (err: any) {
+    return sendFail(res, err?.message || 'Failed to load player career', 500)
+  }
+})
+
+// PATCH /api/players/:id/verify - Admin verify/unverify player profile
+router.patch('/:id/verify', async (req, res) => {
+  const session = await requireAdmin(req)
+  if (!session) return unauthorized(res)
+
+  try {
+    await connectDB()
+    const player = await Player.findById(req.params.id)
+    if (!player) return sendFail(res, 'Player not found', 404)
+
+    const prev = player.isVerified
+    player.isVerified = req.body?.isVerified !== undefined ? Boolean(req.body.isVerified) : !player.isVerified
+    await player.save()
+
+    await writeAuditLog({
+      action: 'VERIFY_PLAYER',
+      actor: { type: 'ADMIN', id: session.adminId, name: session.username },
+      playerId: player._id,
+      beforeSummary: { isVerified: prev },
+      afterSummary: { isVerified: player.isVerified },
+    })
+
+    return sendOk(res, player.toObject())
+  } catch (err: any) {
+    return sendFail(res, err?.message || 'Failed to update verification status', 500)
+  }
+})
+
+// PATCH /api/players/:id/status - Admin update player status
+router.patch('/:id/status', async (req, res) => {
+  const session = await requireAdmin(req)
+  if (!session) return unauthorized(res)
+
+  try {
+    await connectDB()
+    const player = await Player.findById(req.params.id)
+    if (!player) return sendFail(res, 'Player not found', 404)
+    const status = req.body?.status
+    if (!['ACTIVE', 'SUSPENDED', 'RETIRED'].includes(status)) {
+      return sendFail(res, 'Invalid player status')
+    }
+    const prev = player.status
+    player.status = status
+    await player.save()
+
+    await writeAuditLog({
+      action: 'UPDATE_PLAYER_STATUS',
+      actor: { type: 'ADMIN', id: session.adminId, name: session.username },
+      playerId: player._id,
+      reason: req.body?.reason ?? null,
+      beforeSummary: { status: prev },
+      afterSummary: { status },
+    })
+
+    return sendOk(res, player.toObject())
+  } catch (err: any) {
+    return sendFail(res, err?.message || 'Failed to update status', 500)
+  }
+})
+
+// POST /api/players/merge - Admin merge duplicate profiles inside transaction
+router.post('/merge', async (req, res) => {
+  const session = await requireAdmin(req)
+  if (!session) return unauthorized(res)
+
+  try {
+    const sourcePlayerId = String(req.body?.sourcePlayerId ?? '').trim()
+    const targetPlayerId = String(req.body?.targetPlayerId ?? '').trim()
+    const reason = typeof req.body?.reason === 'string' && req.body.reason.trim()
+      ? req.body.reason.trim()
+      : 'Admin duplicate profile merge'
+
+    if (!sourcePlayerId || !targetPlayerId) {
+      return sendFail(res, 'sourcePlayerId and targetPlayerId are required')
+    }
+
+    const result = await mergePlayersAndRecalculate(
+      sourcePlayerId,
+      targetPlayerId,
+      { type: 'ADMIN', id: session.adminId, name: session.username },
+      reason
+    )
+    return sendOk(res, result)
+  } catch (err: any) {
+    return sendFail(res, err?.message || 'Failed to merge players', 400)
+  }
 })
 
 // PATCH /api/players/:id - Update player
@@ -108,8 +478,19 @@ router.patch('/:id', async (req, res) => {
       jerseyNumber,
       teamId: targetTeamId,
       avatarUrl,
+      ...(body.battingStyle !== undefined ? { battingStyle: body.battingStyle || null } : {}),
+      ...(body.bowlingStyle !== undefined ? { bowlingStyle: body.bowlingStyle || null } : {}),
+      ...(body.isVerified !== undefined ? { isVerified: Boolean(body.isVerified) } : {}),
     },
   })
+
+  if (targetTeamId) {
+    await ensureActiveMembershipForPlayer(id, targetTeamId, body.seasonId || null, {
+      jerseyNumber,
+      assignedBy: session.username,
+    })
+  }
+
   return sendOk(res, updated)
 })
 
@@ -343,16 +724,26 @@ router.post('/import', async (req, res) => {
         })
         updatedCount++
       } else {
+        const playerCode = await generateNextPlayerCode()
         const created = await db.player.create({
           data: {
             name,
+            playerCode,
             role,
             gender,
             jerseyNumber: jNum,
             teamId,
             avatarUrl,
+            isClaimed: false,
+            status: 'ACTIVE',
           },
         })
+        if (teamId) {
+          await ensureActiveMembershipForPlayer(created.id, teamId, null, {
+            jerseyNumber: jNum,
+            assignedBy: session.username,
+          })
+        }
         existingMap.set(key, created)
         createdCount++
       }

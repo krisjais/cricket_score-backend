@@ -25,6 +25,10 @@ export type WicketType =
   | 'RUN_OUT'
   | 'STUMPED'
   | 'HIT_WICKET'
+  | 'RETIRED_HURT'
+  | 'RETIRED_OUT'
+  | 'ABSENT'
+  | 'OBSTRUCTING_FIELD'
 export type MatchFormat = 'T10' | 'T20' | 'ODI' | 'CUSTOM'
 
 export const FORMAT_OVERS: Record<string, number> = { T10: 10, T20: 20, ODI: 50 }
@@ -39,17 +43,22 @@ export const WICKET_TYPES: WicketType[] = [
   'RUN_OUT',
   'STUMPED',
   'HIT_WICKET',
+  'RETIRED_HURT',
+  'RETIRED_OUT',
+  'ABSENT',
+  'OBSTRUCTING_FIELD',
 ]
 
-// Wicket types credited to the bowler
-const BOWLER_CREDITED = new Set([
+// Wicket types credited to the bowler (run-outs, hit wickets & retirements excluded per tournament rules)
+export const BOWLER_CREDITED = new Set([
   'BOWLED',
   'CAUGHT',
   'CAUGHT_AND_BOWLED',
   'LBW',
   'STUMPED',
-  'HIT_WICKET',
 ])
+
+const WIDE_ALLOWED_WICKETS = new Set<WicketType>(['STUMPED', 'RUN_OUT', 'HIT_WICKET'])
 
 export interface BallData {
   id: string
@@ -71,6 +80,7 @@ export interface BallData {
 
 export interface PlayerLite {
   id: string
+  playerCode?: string | null
   name: string
   jerseyNumber: number | null
   role: string
@@ -110,8 +120,12 @@ export function validateBallInput(input: BallEventInput): string | null {
   }
   if (input.wicketType) {
     if (!WICKET_TYPES.includes(input.wicketType)) return 'Invalid wicket type'
-    if (input.wicketType !== 'RUN_OUT' && (type === 'WIDE' || type === 'NO_BALL'))
-      return 'Only a run out is possible on a wide or no ball'
+    if (type === 'WIDE' && !WIDE_ALLOWED_WICKETS.has(input.wicketType))
+      return 'Only Stump Out, Run Out, or Hit Wicket is possible on a wide ball'
+    if (type === 'NO_BALL' && input.wicketType !== 'RUN_OUT')
+      return 'Only a run out is possible on a no ball'
+    if (bat > 0 && input.wicketType !== 'HIT_WICKET' && input.wicketType !== 'RUN_OUT')
+      return 'Runs off bat are only possible on Hit Wicket or Run Out'
   }
   return null
 }
@@ -148,6 +162,7 @@ export function isLegalBall(b: Pick<BallData, 'extraType'>): boolean {
 
 export interface BatterCard {
   id: string
+  playerCode?: string | null
   name: string
   jerseyNumber: number | null
   role: string
@@ -165,6 +180,7 @@ export interface BatterCard {
 
 export interface BowlerCard {
   id: string
+  playerCode?: string | null
   name: string
   legalBalls: number
   overs: string
@@ -240,6 +256,7 @@ export interface InningsStats {
 
 interface MutableBatter {
   id: string
+  playerCode?: string | null
   name: string
   jerseyNumber: number | null
   role: string
@@ -253,6 +270,7 @@ interface MutableBatter {
 
 interface MutableBowler {
   id: string
+  playerCode?: string | null
   name: string
   legalBalls: number
   runsConceded: number
@@ -263,7 +281,11 @@ interface MutableBowler {
 }
 
 function ballLabel(b: BallData): TimelineBall {
-  if (b.isWicket) return { label: 'W', kind: 'W', runs: teamRunsOf(b) }
+  if (b.isWicket) {
+    if (b.extraType === 'WIDE') return { label: 'wdW', kind: 'W', runs: teamRunsOf(b) }
+    if (b.runsOffBat > 0) return { label: `${b.runsOffBat}W`, kind: 'W', runs: teamRunsOf(b) }
+    return { label: 'W', kind: 'W', runs: teamRunsOf(b) }
+  }
   if (b.extraType === 'WIDE') return { label: b.extraRuns > 1 ? `${b.extraRuns}wd` : 'wd', kind: 'extra', runs: b.extraRuns }
   if (b.extraType === 'NO_BALL') return { label: b.runsOffBat > 0 ? `nb${b.runsOffBat}` : 'nb', kind: 'extra', runs: teamRunsOf(b) }
   if (b.extraType === 'BYE') return { label: `${b.extraRuns}b`, kind: 'extra', runs: b.extraRuns }
@@ -292,9 +314,17 @@ function fullDismissalText(
     case 'STUMPED':
       return { text: `st ${ball.assistId ? nameOf(ball.assistId) : 'wk'} b ${bowler}`, dismissedId }
     case 'HIT_WICKET':
-      return { text: `hit wicket b ${bowler}`, dismissedId }
+      return { text: `hit wicket (${bowler})`, dismissedId }
     case 'RUN_OUT':
       return { text: `run out${ball.assistId ? ` (${nameOf(ball.assistId)})` : ''}`, dismissedId }
+    case 'RETIRED_HURT':
+      return { text: 'retired hurt', dismissedId }
+    case 'RETIRED_OUT':
+      return { text: 'retired out', dismissedId }
+    case 'ABSENT':
+      return { text: 'absent', dismissedId }
+    case 'OBSTRUCTING_FIELD':
+      return { text: 'obstructing the field', dismissedId }
     default:
       return { text: 'out', dismissedId }
   }
@@ -306,7 +336,17 @@ function commentaryText(ball: BallData, nameOf: (id: string) => string): string 
   const prefix = `${bowler} to ${striker}, `
   if (ball.isWicket) {
     const d = fullDismissalText(ball, nameOf)
-    return `${prefix}OUT! ${nameOf(d.dismissedId)} ${d.text}`
+    const parts: string[] = []
+    if (ball.extraType === 'WIDE') {
+      parts.push(ball.extraRuns > 1 ? `wide (${ball.extraRuns} runs)` : 'wide')
+    } else if (ball.extraType === 'NO_BALL') {
+      parts.push('no ball')
+    }
+    if (ball.runsOffBat === 6) parts.push('SIX')
+    else if (ball.runsOffBat === 4) parts.push('FOUR')
+    else if (ball.runsOffBat > 0) parts.push(`${ball.runsOffBat} run${ball.runsOffBat > 1 ? 's' : ''}`)
+    const detail = parts.length ? `${parts.join(', ')}, ` : ''
+    return `${prefix}${detail}OUT! ${nameOf(d.dismissedId)} ${d.text}`
   }
   if (ball.extraType === 'WIDE') return `${prefix}wide${ball.extraRuns > 1 ? `, ${ball.extraRuns} runs` : ''}`
   if (ball.extraType === 'NO_BALL') return `${prefix}no ball${ball.runsOffBat > 0 ? `, ${ball.runsOffBat} run${ball.runsOffBat > 1 ? 's' : ''}` : ''}`
@@ -360,7 +400,7 @@ export function computeInnings(
     let b = batters.get(id)
     if (!b) {
       const p = battingPlayers.find((x) => x.id === id)
-      b = { id, name: p?.name ?? 'Unknown', jerseyNumber: p?.jerseyNumber ?? null, role: p?.role ?? 'ALL_ROUNDER', runs: 0, balls: 0, fours: 0, sixes: 0, dismissalText: null, batted: false }
+      b = { id, playerCode: p?.playerCode ?? null, name: p?.name ?? 'Unknown', jerseyNumber: p?.jerseyNumber ?? null, role: p?.role ?? 'ALL_ROUNDER', runs: 0, balls: 0, fours: 0, sixes: 0, dismissalText: null, batted: false }
       batters.set(id, b)
     }
     return b
@@ -369,7 +409,7 @@ export function computeInnings(
     let b = bowlers.get(id)
     if (!b) {
       const p = bowlingPlayers.find((x) => x.id === id)
-      b = { id, name: p?.name ?? 'Unknown', legalBalls: 0, runsConceded: 0, wickets: 0, dots: 0, wides: 0, noBalls: 0 }
+      b = { id, playerCode: p?.playerCode ?? null, name: p?.name ?? 'Unknown', legalBalls: 0, runsConceded: 0, wickets: 0, dots: 0, wides: 0, noBalls: 0 }
       bowlers.set(id, b)
     }
     return b
@@ -422,7 +462,7 @@ export function computeInnings(
 
     if (ball.isWicket) {
       const d = fullDismissalText(ball, nameOf)
-      dismissedIds.add(d.dismissedId)
+      if (ball.wicketType !== 'RETIRED_HURT') dismissedIds.add(d.dismissedId)
       if (BOWLER_CREDITED.has(ball.wicketType || '')) bowler.wickets++
       getBatter(d.dismissedId).dismissalText = d.text
       fow.push({ wicket: wickets, runs, over: oversStr(legalBalls), batsmanName: nameOf(d.dismissedId) })
@@ -524,7 +564,7 @@ export function computeInnings(
     const b = batters.get(id)!
     const atCrease = live ? live.strikerId === id || live.nonStrikerId === id : false
     battingCards.push({
-      id: b.id, name: b.name, jerseyNumber: b.jerseyNumber, role: b.role,
+      id: b.id, playerCode: b.playerCode ?? null, name: b.name, jerseyNumber: b.jerseyNumber, role: b.role,
       runs: b.runs, balls: b.balls, fours: b.fours, sixes: b.sixes,
       strikeRate: b.balls > 0 ? round2((b.runs * 100) / b.balls) : 0,
       out: dismissedIds.has(id),
@@ -537,7 +577,7 @@ export function computeInnings(
   for (const p of battingPlayers) {
     if (!order.includes(p.id)) {
       battingCards.push({
-        id: p.id, name: p.name, jerseyNumber: p.jerseyNumber, role: p.role,
+        id: p.id, playerCode: p.playerCode ?? null, name: p.name, jerseyNumber: p.jerseyNumber, role: p.role,
         runs: 0, balls: 0, fours: 0, sixes: 0, strikeRate: 0,
         out: false, dismissalText: null, batted: false, isOnStrike: false, atCrease: false,
       })
@@ -547,6 +587,7 @@ export function computeInnings(
   // ---- bowling cards ----
   const bowlingCards: BowlerCard[] = [...bowlers.values()].map((b) => ({
     id: b.id,
+    playerCode: b.playerCode ?? null,
     name: b.name,
     legalBalls: b.legalBalls,
     overs: oversStr(b.legalBalls),
@@ -618,8 +659,14 @@ export function buildResultText(
   const t1 = teamNameOf(innings1.battingTeamId)
   const t2 = teamNameOf(innings2.battingTeamId)
   if (innings2.runs >= innings1.runs + 1) {
-    const wktsLeft = maxWicketsFor(squadSize2) - innings2.wickets
-    return { text: `${t2} won by ${wktsLeft} wicket${wktsLeft === 1 ? '' : 's'}`, winnerId: innings2.battingTeamId }
+    const wktsLeft = Math.max(maxWicketsFor(squadSize2) - innings2.wickets, 0)
+    return {
+      text:
+        wktsLeft > 0
+          ? `${t2} won by ${wktsLeft} wicket${wktsLeft === 1 ? '' : 's'}`
+          : `${t2} won (final wicket)`,
+      winnerId: innings2.battingTeamId,
+    }
   }
   if (innings2.runs === innings1.runs) {
     return { text: 'Match tied', winnerId: null }

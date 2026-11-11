@@ -3,7 +3,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.db = exports.Ball = exports.Innings = exports.Match = exports.Player = exports.Team = exports.Admin = void 0;
+exports.db = exports.StatisticsAuditLog = exports.PlayerProfileClaim = exports.Award = exports.PlayerCareerStat = exports.PlayerMatchStat = exports.TeamMembership = exports.Tournament = exports.Season = exports.Counter = exports.RefreshToken = exports.OtpVerification = exports.User = exports.Ball = exports.Innings = exports.Match = exports.Player = exports.Team = exports.Admin = void 0;
+exports.withMongoTransaction = withMongoTransaction;
 exports.connectDB = connectDB;
 const mongoose_1 = __importDefault(require("mongoose"));
 const models_1 = require("../models");
@@ -13,7 +14,50 @@ Object.defineProperty(exports, "Player", { enumerable: true, get: function () { 
 Object.defineProperty(exports, "Match", { enumerable: true, get: function () { return models_1.Match; } });
 Object.defineProperty(exports, "Innings", { enumerable: true, get: function () { return models_1.Innings; } });
 Object.defineProperty(exports, "Ball", { enumerable: true, get: function () { return models_1.Ball; } });
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/cricket_live';
+Object.defineProperty(exports, "User", { enumerable: true, get: function () { return models_1.User; } });
+Object.defineProperty(exports, "OtpVerification", { enumerable: true, get: function () { return models_1.OtpVerification; } });
+Object.defineProperty(exports, "RefreshToken", { enumerable: true, get: function () { return models_1.RefreshToken; } });
+Object.defineProperty(exports, "Counter", { enumerable: true, get: function () { return models_1.Counter; } });
+Object.defineProperty(exports, "Season", { enumerable: true, get: function () { return models_1.Season; } });
+Object.defineProperty(exports, "Tournament", { enumerable: true, get: function () { return models_1.Tournament; } });
+Object.defineProperty(exports, "TeamMembership", { enumerable: true, get: function () { return models_1.TeamMembership; } });
+Object.defineProperty(exports, "PlayerMatchStat", { enumerable: true, get: function () { return models_1.PlayerMatchStat; } });
+Object.defineProperty(exports, "PlayerCareerStat", { enumerable: true, get: function () { return models_1.PlayerCareerStat; } });
+Object.defineProperty(exports, "Award", { enumerable: true, get: function () { return models_1.Award; } });
+Object.defineProperty(exports, "PlayerProfileClaim", { enumerable: true, get: function () { return models_1.PlayerProfileClaim; } });
+Object.defineProperty(exports, "StatisticsAuditLog", { enumerable: true, get: function () { return models_1.StatisticsAuditLog; } });
+/**
+ * Execute work inside a MongoDB multi-document transaction when supported (replica sets / Atlas),
+ * falling back cleanly to direct execution if running against a standalone local mongod instance.
+ */
+async function withMongoTransaction(work) {
+    await connectDB();
+    const session = await mongoose_1.default.startSession();
+    try {
+        let result;
+        await session.withTransaction(async () => {
+            result = await work(session);
+        });
+        return result;
+    }
+    catch (err) {
+        const msg = String(err?.message || '');
+        const code = err?.code;
+        const unsupportedTx = code === 20 ||
+            msg.includes('Transaction numbers are only allowed on a replica set') ||
+            msg.includes('does not support transactions');
+        if (unsupportedTx) {
+            return work(null);
+        }
+        throw err;
+    }
+    finally {
+        await session.endSession();
+    }
+}
+function getMongoUri() {
+    return process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/cricket_live';
+}
 /**
  * Connect to MongoDB.
  */
@@ -22,7 +66,7 @@ async function connectDB() {
         return mongoose_1.default;
     }
     try {
-        const conn = await mongoose_1.default.connect(MONGODB_URI);
+        const conn = await mongoose_1.default.connect(getMongoUri());
         console.log(`> MongoDB Connected: ${conn.connection.host}/${conn.connection.name}`);
         return conn;
     }

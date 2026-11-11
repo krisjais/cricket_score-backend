@@ -3,7 +3,7 @@
  * computes scorecards with the pure engine, syncs the match state machine
  * (innings completion, targets, results) and builds API/push payloads.
  */
-import { db } from './db'
+import { db, Player, TeamMembership } from './db'
 import {
   BallData,
   buildResultText,
@@ -70,6 +70,14 @@ export interface MatchSummary {
   totalOvers: number
   venue: string | null
   status: string
+  seasonId: string | null
+  tournamentId: string | null
+  matchDate: string | null
+  scorecardStatus: string
+  playerOfMatchId: string | null
+  playingXIA: string[]
+  playingXIB: string[]
+  playerStatuses: Array<{ playerId: string; status: string; notes?: string | null }>
   currentInnings: number
   tossWinnerId: string | null
   tossDecision: string | null
@@ -101,13 +109,102 @@ async function loadFullMatch(matchId: string) {
   })
 }
 
-async function loadSquads(match: { teamAId: string; teamBId: string }) {
+export async function loadSquads(match: {
+  teamAId: string
+  teamBId: string
+  seasonId?: string | null
+  playingXIA?: string[]
+  playingXIB?: string[]
+  innings?: Array<{
+    battingTeamId: string
+    bowlingTeamId: string
+    balls?: Array<{
+      strikerId: string
+      nonStrikerId: string
+      bowlerId: string
+      dismissedId?: string | null
+      assistId?: string | null
+    }>
+  }>
+}) {
   const teams = await db.team.findMany({
     where: { id: { in: [match.teamAId, match.teamBId] } },
     include: { players: { orderBy: [{ jerseyNumber: 'asc' }, { name: 'asc' }] } },
   })
   const teamA = teams.find((t) => t.id === match.teamAId) ?? null
   const teamB = teams.find((t) => t.id === match.teamBId) ?? null
+  if (!teamA || !teamB) return { teamA, teamB }
+
+  const sortPlayers = (list: any[]) =>
+    [...list].sort((a, b) => (a.jerseyNumber ?? 999) - (b.jerseyNumber ?? 999) || a.name.localeCompare(b.name))
+
+  const explicitA = Array.isArray(match.playingXIA) && match.playingXIA.length > 0 ? match.playingXIA : null
+  const explicitB = Array.isArray(match.playingXIB) && match.playingXIB.length > 0 ? match.playingXIB : null
+
+  const seasonMemberByTeam = new Map<string, string[]>()
+  if (match.seasonId && (!explicitA || !explicitB)) {
+    const memberships = await TeamMembership.find({
+      seasonId: match.seasonId,
+      teamId: { $in: [match.teamAId, match.teamBId] },
+      status: { $in: ['ACTIVE', 'COMPLETED'] },
+    }).lean()
+    for (const m of memberships) {
+      const list = seasonMemberByTeam.get(m.teamId) ?? []
+      list.push(m.playerId)
+      seasonMemberByTeam.set(m.teamId, list)
+    }
+  }
+
+  const extraIdsA = new Set<string>(explicitA ?? seasonMemberByTeam.get(match.teamAId) ?? [])
+  const extraIdsB = new Set<string>(explicitB ?? seasonMemberByTeam.get(match.teamBId) ?? [])
+
+  // Ensure any player appearing in already-recorded balls remains resolvable even after future team transfers
+  for (const inn of match.innings ?? []) {
+    const batSet = inn.battingTeamId === match.teamAId ? extraIdsA : extraIdsB
+    const bowlSet = inn.bowlingTeamId === match.teamAId ? extraIdsA : extraIdsB
+    for (const b of inn.balls ?? []) {
+      if (b.strikerId) batSet.add(b.strikerId)
+      if (b.nonStrikerId) batSet.add(b.nonStrikerId)
+      if (b.dismissedId) batSet.add(b.dismissedId)
+      if (b.bowlerId) bowlSet.add(b.bowlerId)
+      if (b.assistId) bowlSet.add(b.assistId)
+    }
+  }
+
+  const allWantedIds = [...new Set([...extraIdsA, ...extraIdsB])]
+  if (allWantedIds.length > 0) {
+    const loaded = await Player.find({ _id: { $in: allWantedIds } }).lean()
+    const byId = new Map(
+      loaded.map((p) => [
+        p._id,
+        {
+          ...p,
+          id: p._id,
+        },
+      ])
+    )
+
+    if (explicitA || seasonMemberByTeam.has(match.teamAId)) {
+      teamA.players = sortPlayers([...extraIdsA].map((id) => byId.get(id)).filter(Boolean))
+    } else if (extraIdsA.size > 0) {
+      const currentMap = new Map(teamA.players.map((p: any) => [p.id, p]))
+      for (const id of extraIdsA) {
+        if (!currentMap.has(id) && byId.has(id)) currentMap.set(id, byId.get(id))
+      }
+      teamA.players = sortPlayers([...currentMap.values()])
+    }
+
+    if (explicitB || seasonMemberByTeam.has(match.teamBId)) {
+      teamB.players = sortPlayers([...extraIdsB].map((id) => byId.get(id)).filter(Boolean))
+    } else if (extraIdsB.size > 0) {
+      const currentMap = new Map(teamB.players.map((p: any) => [p.id, p]))
+      for (const id of extraIdsB) {
+        if (!currentMap.has(id) && byId.has(id)) currentMap.set(id, byId.get(id))
+      }
+      teamB.players = sortPlayers([...currentMap.values()])
+    }
+  }
+
   return { teamA, teamB }
 }
 
@@ -151,8 +248,9 @@ function toBallData(b: {
   }
 }
 
-const playerLite = (p: { id: string; name: string; jerseyNumber: number | null; role: string }) => ({
+const playerLite = (p: { id: string; playerCode?: string | null; name: string; jerseyNumber: number | null; role: string }) => ({
   id: p.id,
+  playerCode: p.playerCode ?? null,
   name: p.name,
   jerseyNumber: p.jerseyNumber,
   role: p.role,
@@ -359,6 +457,14 @@ export async function buildMatchPayload(matchId: string): Promise<MatchStatePayl
     totalOvers: match.totalOvers,
     venue: match.venue,
     status: match.status,
+    seasonId: match.seasonId ?? null,
+    tournamentId: match.tournamentId ?? null,
+    matchDate: match.matchDate instanceof Date ? match.matchDate.toISOString() : (match.matchDate ?? null),
+    scorecardStatus: match.scorecardStatus ?? 'DRAFT',
+    playerOfMatchId: match.playerOfMatchId ?? null,
+    playingXIA: match.playingXIA ?? [],
+    playingXIB: match.playingXIB ?? [],
+    playerStatuses: match.playerStatuses ?? [],
     currentInnings: match.currentInnings,
     tossWinnerId: match.tossWinnerId,
     tossDecision: match.tossDecision,
@@ -422,6 +528,14 @@ export async function buildMatchSummaries(): Promise<MatchSummary[]> {
       totalOvers: m.totalOvers,
       venue: m.venue,
       status: m.status,
+      seasonId: m.seasonId ?? null,
+      tournamentId: m.tournamentId ?? null,
+      matchDate: m.matchDate instanceof Date ? m.matchDate.toISOString() : (m.matchDate ?? null),
+      scorecardStatus: m.scorecardStatus ?? 'DRAFT',
+      playerOfMatchId: m.playerOfMatchId ?? null,
+      playingXIA: m.playingXIA ?? [],
+      playingXIB: m.playingXIB ?? [],
+      playerStatuses: m.playerStatuses ?? [],
       currentInnings: m.currentInnings,
       tossWinnerId: m.tossWinnerId,
       tossDecision: m.tossDecision,

@@ -5,9 +5,32 @@ import { db } from './db'
 export const ADMIN_COOKIE = 'cricket_admin_session'
 export const SESSION_DAYS = 7
 
-function secretKey(): Uint8Array {
+export function secretKey(): Uint8Array {
   const secret = process.env.AUTH_SECRET || 'cricket-live-dev-secret-key-change-in-production'
   return new TextEncoder().encode(secret)
+}
+
+export function extractTokenFromRequest(req: Request, cookieName: string): string | undefined {
+  let token: string | undefined = req.cookies?.[cookieName]
+
+  if (!token && req.headers.cookie) {
+    for (const part of req.headers.cookie.split(';')) {
+      const idx = part.indexOf('=')
+      if (idx === -1) continue
+      const k = part.slice(0, idx).trim()
+      const v = part.slice(idx + 1).trim()
+      if (k === cookieName) {
+        token = decodeURIComponent(v)
+        break
+      }
+    }
+  }
+
+  if (!token && req.headers.authorization?.startsWith('Bearer ')) {
+    token = req.headers.authorization.slice(7).trim()
+  }
+
+  return token
 }
 
 export async function createSessionToken(adminId: string, username: string): Promise<string> {
@@ -24,25 +47,7 @@ export interface AdminSession {
 }
 
 export async function getSession(req: Request): Promise<AdminSession | null> {
-  let token: string | undefined = req.cookies?.[ADMIN_COOKIE]
-
-  if (!token && req.headers.cookie) {
-    const header = req.headers.cookie
-    for (const part of header.split(';')) {
-      const idx = part.indexOf('=')
-      if (idx === -1) continue
-      const k = part.slice(0, idx).trim()
-      const v = part.slice(idx + 1).trim()
-      if (k === ADMIN_COOKIE) {
-        token = decodeURIComponent(v)
-        break
-      }
-    }
-  }
-
-  if (!token && req.headers.authorization?.startsWith('Bearer ')) {
-    token = req.headers.authorization.slice(7).trim()
-  }
+  const token = extractTokenFromRequest(req, ADMIN_COOKIE)
 
   if (!token) return null
 

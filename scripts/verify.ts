@@ -10,8 +10,7 @@
  *  5. sum of bowler conceded === runs - byes - leg-byes (byes/leg-byes not charged to bowler)
  *  6. balls faced by batters === legal deliveries (byes/leg-byes count as faced)
  */
-import dotenv from 'dotenv'
-dotenv.config()
+import '../src/lib/env'
 
 import { db, connectDB } from '../src/lib/db'
 import { buildMatchPayload } from '../src/lib/match-state'

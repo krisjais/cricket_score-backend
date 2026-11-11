@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.loadSquads = loadSquads;
 exports.teamLite = teamLite;
 exports.syncMatchState = syncMatchState;
 exports.buildMatchPayload = buildMatchPayload;
@@ -24,6 +25,76 @@ async function loadSquads(match) {
     });
     const teamA = teams.find((t) => t.id === match.teamAId) ?? null;
     const teamB = teams.find((t) => t.id === match.teamBId) ?? null;
+    if (!teamA || !teamB)
+        return { teamA, teamB };
+    const sortPlayers = (list) => [...list].sort((a, b) => (a.jerseyNumber ?? 999) - (b.jerseyNumber ?? 999) || a.name.localeCompare(b.name));
+    const explicitA = Array.isArray(match.playingXIA) && match.playingXIA.length > 0 ? match.playingXIA : null;
+    const explicitB = Array.isArray(match.playingXIB) && match.playingXIB.length > 0 ? match.playingXIB : null;
+    const seasonMemberByTeam = new Map();
+    if (match.seasonId && (!explicitA || !explicitB)) {
+        const memberships = await db_1.TeamMembership.find({
+            seasonId: match.seasonId,
+            teamId: { $in: [match.teamAId, match.teamBId] },
+            status: { $in: ['ACTIVE', 'COMPLETED'] },
+        }).lean();
+        for (const m of memberships) {
+            const list = seasonMemberByTeam.get(m.teamId) ?? [];
+            list.push(m.playerId);
+            seasonMemberByTeam.set(m.teamId, list);
+        }
+    }
+    const extraIdsA = new Set(explicitA ?? seasonMemberByTeam.get(match.teamAId) ?? []);
+    const extraIdsB = new Set(explicitB ?? seasonMemberByTeam.get(match.teamBId) ?? []);
+    // Ensure any player appearing in already-recorded balls remains resolvable even after future team transfers
+    for (const inn of match.innings ?? []) {
+        const batSet = inn.battingTeamId === match.teamAId ? extraIdsA : extraIdsB;
+        const bowlSet = inn.bowlingTeamId === match.teamAId ? extraIdsA : extraIdsB;
+        for (const b of inn.balls ?? []) {
+            if (b.strikerId)
+                batSet.add(b.strikerId);
+            if (b.nonStrikerId)
+                batSet.add(b.nonStrikerId);
+            if (b.dismissedId)
+                batSet.add(b.dismissedId);
+            if (b.bowlerId)
+                bowlSet.add(b.bowlerId);
+            if (b.assistId)
+                bowlSet.add(b.assistId);
+        }
+    }
+    const allWantedIds = [...new Set([...extraIdsA, ...extraIdsB])];
+    if (allWantedIds.length > 0) {
+        const loaded = await db_1.Player.find({ _id: { $in: allWantedIds } }).lean();
+        const byId = new Map(loaded.map((p) => [
+            p._id,
+            {
+                ...p,
+                id: p._id,
+            },
+        ]));
+        if (explicitA || seasonMemberByTeam.has(match.teamAId)) {
+            teamA.players = sortPlayers([...extraIdsA].map((id) => byId.get(id)).filter(Boolean));
+        }
+        else if (extraIdsA.size > 0) {
+            const currentMap = new Map(teamA.players.map((p) => [p.id, p]));
+            for (const id of extraIdsA) {
+                if (!currentMap.has(id) && byId.has(id))
+                    currentMap.set(id, byId.get(id));
+            }
+            teamA.players = sortPlayers([...currentMap.values()]);
+        }
+        if (explicitB || seasonMemberByTeam.has(match.teamBId)) {
+            teamB.players = sortPlayers([...extraIdsB].map((id) => byId.get(id)).filter(Boolean));
+        }
+        else if (extraIdsB.size > 0) {
+            const currentMap = new Map(teamB.players.map((p) => [p.id, p]));
+            for (const id of extraIdsB) {
+                if (!currentMap.has(id) && byId.has(id))
+                    currentMap.set(id, byId.get(id));
+            }
+            teamB.players = sortPlayers([...currentMap.values()]);
+        }
+    }
     return { teamA, teamB };
 }
 function teamLite(t) {
@@ -50,6 +121,7 @@ function toBallData(b) {
 }
 const playerLite = (p) => ({
     id: p.id,
+    playerCode: p.playerCode ?? null,
     name: p.name,
     jerseyNumber: p.jerseyNumber,
     role: p.role,
@@ -214,6 +286,14 @@ async function buildMatchPayload(matchId) {
         totalOvers: match.totalOvers,
         venue: match.venue,
         status: match.status,
+        seasonId: match.seasonId ?? null,
+        tournamentId: match.tournamentId ?? null,
+        matchDate: match.matchDate instanceof Date ? match.matchDate.toISOString() : (match.matchDate ?? null),
+        scorecardStatus: match.scorecardStatus ?? 'DRAFT',
+        playerOfMatchId: match.playerOfMatchId ?? null,
+        playingXIA: match.playingXIA ?? [],
+        playingXIB: match.playingXIB ?? [],
+        playerStatuses: match.playerStatuses ?? [],
         currentInnings: match.currentInnings,
         tossWinnerId: match.tossWinnerId,
         tossDecision: match.tossDecision,
@@ -276,6 +356,14 @@ async function buildMatchSummaries() {
             totalOvers: m.totalOvers,
             venue: m.venue,
             status: m.status,
+            seasonId: m.seasonId ?? null,
+            tournamentId: m.tournamentId ?? null,
+            matchDate: m.matchDate instanceof Date ? m.matchDate.toISOString() : (m.matchDate ?? null),
+            scorecardStatus: m.scorecardStatus ?? 'DRAFT',
+            playerOfMatchId: m.playerOfMatchId ?? null,
+            playingXIA: m.playingXIA ?? [],
+            playingXIB: m.playingXIB ?? [],
+            playerStatuses: m.playerStatuses ?? [],
             currentInnings: m.currentInnings,
             tossWinnerId: m.tossWinnerId,
             tossDecision: m.tossDecision,

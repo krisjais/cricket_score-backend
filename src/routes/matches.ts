@@ -1,7 +1,14 @@
 import { Router } from 'express'
-import { db } from '../lib/db'
+import { Award, db, Match, Player, PlayerMatchStat } from '../lib/db'
 import { requireAdmin } from '../lib/auth'
 import { sendOk, sendFail, unauthorized } from '../lib/api-utils'
+import { ensureDefaultSeasonAndTournament } from '../lib/bootstrap'
+import {
+  correctMatchAndRecalculate,
+  finalizeMatchScorecard,
+  rebuildCareerStatsForPlayers,
+  verifyMatchAndSyncStats,
+} from '../lib/stats-service'
 import {
   buildMatchPayload,
   emitMatchUpdate,
@@ -71,14 +78,31 @@ router.post('/', async (req, res) => {
     totalOvers = FORMAT_OVERS[format]
   }
 
+  const defaults = await ensureDefaultSeasonAndTournament()
+  const seasonId = typeof req.body?.seasonId === 'string' && req.body.seasonId.trim()
+    ? req.body.seasonId.trim()
+    : defaults.season._id
+  const tournamentId = typeof req.body?.tournamentId === 'string' && req.body.tournamentId.trim()
+    ? req.body.tournamentId.trim()
+    : defaults.tournament._id
+  const matchDate = req.body?.matchDate ? new Date(req.body.matchDate) : new Date()
+  const playingXIA = Array.isArray(req.body?.playingXIA) ? req.body.playingXIA : []
+  const playingXIB = Array.isArray(req.body?.playingXIB) ? req.body.playingXIB : []
+
   const match = await db.match.create({
     data: {
       teamAId,
       teamBId,
+      seasonId,
+      tournamentId,
+      matchDate: Number.isNaN(matchDate.getTime()) ? new Date() : matchDate,
+      playingXIA,
+      playingXIB,
       format,
       totalOvers,
       venue: typeof venue === 'string' ? venue.trim() || null : null,
       status: 'SCHEDULED',
+      scorecardStatus: 'DRAFT',
     },
   })
 
@@ -155,6 +179,13 @@ router.patch('/:id', async (req, res) => {
       totalOvers,
       teamAId,
       teamBId,
+      ...(body.seasonId !== undefined ? { seasonId: body.seasonId || null } : {}),
+      ...(body.tournamentId !== undefined ? { tournamentId: body.tournamentId || null } : {}),
+      ...(body.matchDate !== undefined ? { matchDate: body.matchDate ? new Date(body.matchDate) : null } : {}),
+      ...(Array.isArray(body.playingXIA) ? { playingXIA: body.playingXIA } : {}),
+      ...(Array.isArray(body.playingXIB) ? { playingXIB: body.playingXIB } : {}),
+      ...(body.playerOfMatchId !== undefined ? { playerOfMatchId: body.playerOfMatchId || null } : {}),
+      ...(Array.isArray(body.playerStatuses) ? { playerStatuses: body.playerStatuses } : {}),
     },
   })
 
@@ -171,7 +202,13 @@ router.delete('/:id', async (req, res) => {
   const match = await db.match.findUnique({ where: { id } })
   if (!match) return sendFail(res, 'Match not found', 404)
 
+  const affectedStats = await PlayerMatchStat.find({ matchId: id }).select({ playerId: 1 }).lean()
   await db.match.delete({ where: { id } })
+  if (affectedStats.length > 0) {
+    await PlayerMatchStat.deleteMany({ matchId: id })
+    await Award.deleteMany({ matchId: id })
+    await rebuildCareerStatsForPlayers(affectedStats.map((s) => s.playerId))
+  }
   const summaries = await buildMatchSummaries()
   await emitToRoom('matches', 'matches:update', summaries)
   await emitToRoom(`match:${id}`, 'match:update', null)
@@ -269,6 +306,139 @@ router.post('/:id/undo', async (req, res) => {
   } catch (e: any) {
     if (e instanceof MatchError) return sendFail(res, e.message, e.status)
     return sendFail(res, e?.message || 'Error undoing last ball', 500)
+  }
+})
+
+// POST /api/matches/:id/finalize - Finalize scorecard before verification
+router.post('/:id/finalize', async (req, res) => {
+  const session = await requireAdmin(req)
+  if (!session) return unauthorized(res)
+
+  try {
+    const updated = await finalizeMatchScorecard(req.params.id, {
+      type: 'ADMIN',
+      id: session.adminId,
+      name: session.username,
+    })
+    await emitMatchUpdate(req.params.id)
+    return sendOk(res, { match: updated, payload: await buildMatchPayload(req.params.id) })
+  } catch (e: any) {
+    return sendFail(res, e?.message || 'Failed to finalize match scorecard', 400)
+  }
+})
+
+// POST /api/matches/:id/verify - Verify scorecard & idempotently sync player/career stats
+router.post('/:id/verify', async (req, res) => {
+  const session = await requireAdmin(req)
+  if (!session) return unauthorized(res)
+
+  try {
+    if (req.body?.playerOfMatchId !== undefined) {
+      const m = await Match.findById(req.params.id)
+      if (!m) return sendFail(res, 'Match not found', 404)
+      m.playerOfMatchId = req.body.playerOfMatchId || null
+      await m.save()
+    }
+    const result = await verifyMatchAndSyncStats(req.params.id, {
+      type: 'ADMIN',
+      id: session.adminId,
+      name: session.username,
+    }, { force: Boolean(req.body?.force) })
+    await emitMatchUpdate(req.params.id)
+    return sendOk(res, { ...result, payload: await buildMatchPayload(req.params.id) })
+  } catch (e: any) {
+    return sendFail(res, e?.message || 'Failed to verify match statistics', 400)
+  }
+})
+
+// POST /api/matches/:id/correct - Admin correction workflow with transactional stats recalculation & audit log
+router.post('/:id/correct', async (req, res) => {
+  const session = await requireAdmin(req)
+  if (!session) return unauthorized(res)
+
+  try {
+    const reason = typeof req.body?.reason === 'string' && req.body.reason.trim()
+      ? req.body.reason.trim()
+      : 'Authorized scorecard correction'
+    const result = await correctMatchAndRecalculate(
+      req.params.id,
+      req.body ?? {},
+      { type: 'ADMIN', id: session.adminId, name: session.username },
+      reason
+    )
+    await emitMatchUpdate(req.params.id)
+    return sendOk(res, { ...result, payload: await buildMatchPayload(req.params.id) })
+  } catch (e: any) {
+    return sendFail(res, e?.message || 'Failed to apply scorecard correction', 400)
+  }
+})
+
+// POST /api/matches/:id/player-status - Set RETIRED_HURT / RETIRED_OUT / ABSENT / PLAYED for a match player
+router.post('/:id/player-status', async (req, res) => {
+  const session = await requireAdmin(req)
+  if (!session) return unauthorized(res)
+
+  try {
+    const { playerId, status, notes } = req.body ?? {}
+    if (!playerId || !['PLAYED', 'RETIRED_HURT', 'RETIRED_OUT', 'ABSENT'].includes(status)) {
+      return sendFail(res, 'Valid playerId and status (PLAYED | RETIRED_HURT | RETIRED_OUT | ABSENT) are required')
+    }
+    const player = await Player.findById(playerId).select({ _id: 1 }).lean()
+    if (!player) return sendFail(res, 'Player not found', 404)
+
+    const match = await Match.findById(req.params.id)
+    if (!match) return sendFail(res, 'Match not found', 404)
+
+    const filtered = (match.playerStatuses ?? []).filter((s) => s.playerId !== playerId)
+    filtered.push({ playerId, status, notes: typeof notes === 'string' ? notes.trim() || null : null })
+    match.playerStatuses = filtered
+    await match.save()
+
+    if (match.scorecardStatus === 'VERIFIED' && match.status === 'COMPLETED') {
+      await verifyMatchAndSyncStats(
+        match._id,
+        { type: 'ADMIN', id: session.adminId, name: session.username },
+        { force: true, action: 'CORRECT_MATCH', reason: `Updated player status to ${status}` }
+      )
+    }
+
+    await emitMatchUpdate(req.params.id)
+    return sendOk(res, await buildMatchPayload(req.params.id))
+  } catch (e: any) {
+    return sendFail(res, e?.message || 'Failed to update player match status', 500)
+  }
+})
+
+// POST /api/matches/:id/player-of-match - Assign Player of the Match award
+router.post('/:id/player-of-match', async (req, res) => {
+  const session = await requireAdmin(req)
+  if (!session) return unauthorized(res)
+
+  try {
+    const match = await Match.findById(req.params.id)
+    if (!match) return sendFail(res, 'Match not found', 404)
+
+    const playerId = typeof req.body?.playerId === 'string' && req.body.playerId.trim() ? req.body.playerId.trim() : null
+    if (playerId) {
+      const p = await Player.findById(playerId).select({ _id: 1 }).lean()
+      if (!p) return sendFail(res, 'Player not found', 404)
+    }
+
+    match.playerOfMatchId = playerId
+    await match.save()
+
+    if (match.scorecardStatus === 'VERIFIED' && match.status === 'COMPLETED') {
+      await verifyMatchAndSyncStats(
+        match._id,
+        { type: 'ADMIN', id: session.adminId, name: session.username },
+        { force: true, action: 'CORRECT_MATCH', reason: 'Updated Player of the Match' }
+      )
+    }
+
+    await emitMatchUpdate(req.params.id)
+    return sendOk(res, await buildMatchPayload(req.params.id))
+  } catch (e: any) {
+    return sendFail(res, e?.message || 'Failed to assign Player of the Match', 500)
   }
 })
 

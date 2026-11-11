@@ -14,7 +14,7 @@ import {
   maxWicketsFor,
   validateBallInput,
 } from './cricket'
-import { buildMatchPayload, teamLite, MatchSummary, buildMatchSummaries } from './match-state'
+import { buildMatchPayload, teamLite, MatchSummary, buildMatchSummaries, loadSquads } from './match-state'
 import { emitToRoom } from './broadcast'
 
 export async function emitMatchUpdate(matchId: string): Promise<void> {
@@ -127,13 +127,15 @@ async function requireMatch(matchId: string) {
   return match
 }
 
-async function requireSquads(match: { teamAId: string; teamBId: string }) {
-  const teams = await db.team.findMany({
-    where: { id: { in: [match.teamAId, match.teamBId] } },
-    include: { players: { orderBy: [{ jerseyNumber: 'asc' }, { name: 'asc' }] } },
-  })
-  const teamA = teams.find((t) => t.id === match.teamAId)
-  const teamB = teams.find((t) => t.id === match.teamBId)
+async function requireSquads(match: {
+  teamAId: string
+  teamBId: string
+  seasonId?: string | null
+  playingXIA?: string[]
+  playingXIB?: string[]
+  innings?: any[]
+}) {
+  const { teamA, teamB } = await loadSquads(match)
   if (!teamA || !teamB) throw new MatchError('Match teams not found', 404)
   return { teamA, teamB }
 }

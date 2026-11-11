@@ -1,7 +1,4 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 /**
  * Verification: recompute innings totals straight from raw Ball rows and
@@ -15,8 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
  *  5. sum of bowler conceded === runs - byes - leg-byes (byes/leg-byes not charged to bowler)
  *  6. balls faced by batters === legal deliveries (byes/leg-byes count as faced)
  */
-const dotenv_1 = __importDefault(require("dotenv"));
-dotenv_1.default.config();
+require("../src/lib/env");
 const db_1 = require("../src/lib/db");
 const match_state_1 = require("../src/lib/match-state");
 async function main() {

@@ -36,22 +36,27 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+require("./lib/env");
 const http_1 = __importDefault(require("http"));
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
-const dotenv_1 = __importDefault(require("dotenv"));
-dotenv_1.default.config();
 const socket_1 = require("./socket");
 const db_1 = require("./lib/db");
 const auth_1 = require("./lib/auth");
+const bootstrap_1 = require("./lib/bootstrap");
 const auth_2 = __importDefault(require("./routes/auth"));
+const player_auth_1 = __importDefault(require("./routes/player-auth"));
 const matches_1 = __importDefault(require("./routes/matches"));
 const players_1 = __importDefault(require("./routes/players"));
 const teams_1 = __importDefault(require("./routes/teams"));
 const admin_1 = __importDefault(require("./routes/admin"));
 const awards_1 = __importDefault(require("./routes/awards"));
 const standings_1 = __importDefault(require("./routes/standings"));
+const seasons_1 = __importDefault(require("./routes/seasons"));
+const tournaments_1 = __importDefault(require("./routes/tournaments"));
+const memberships_1 = __importDefault(require("./routes/memberships"));
+const leaderboards_1 = __importDefault(require("./routes/leaderboards"));
 const app = (0, express_1.default)();
 const server = http_1.default.createServer(app);
 const PORT = process.env.PORT || 5000;
@@ -78,12 +83,17 @@ app.get('/api', (_req, res) => {
 });
 // Route modules
 app.use('/api/auth', auth_2.default);
+app.use('/api/player-auth', player_auth_1.default);
 app.use('/api/matches', matches_1.default);
 app.use('/api/players', players_1.default);
 app.use('/api/teams', teams_1.default);
 app.use('/api/admin', admin_1.default);
 app.use('/api/awards', awards_1.default);
 app.use('/api/standings', standings_1.default);
+app.use('/api/seasons', seasons_1.default);
+app.use('/api/tournaments', tournaments_1.default);
+app.use('/api/memberships', memberships_1.default);
+app.use('/api/leaderboards', leaderboards_1.default);
 // Fallback 404
 app.use('/api/*', (_req, res) => {
     res.status(404).json({ ok: false, error: 'Endpoint not found' });
@@ -94,6 +104,7 @@ async function start() {
     try {
         await (0, db_1.connectDB)();
         await (0, auth_1.ensureDefaultAdmin)();
+        await (0, bootstrap_1.ensurePlayerSystemBootstrap)();
     }
     catch (err) {
         console.warn('> Warning: MongoDB connection failed on start. Queries will retry on demand.');

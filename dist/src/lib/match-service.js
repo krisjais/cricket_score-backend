@@ -122,12 +122,7 @@ async function requireMatch(matchId) {
     return match;
 }
 async function requireSquads(match) {
-    const teams = await db_1.db.team.findMany({
-        where: { id: { in: [match.teamAId, match.teamBId] } },
-        include: { players: { orderBy: [{ jerseyNumber: 'asc' }, { name: 'asc' }] } },
-    });
-    const teamA = teams.find((t) => t.id === match.teamAId);
-    const teamB = teams.find((t) => t.id === match.teamBId);
+    const { teamA, teamB } = await (0, match_state_1.loadSquads)(match);
     if (!teamA || !teamB)
         throw new MatchError('Match teams not found', 404);
     return { teamA, teamB };

@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const db_1 = require("../lib/db");
+const stats_service_1 = require("../lib/stats-service");
 const auth_1 = require("../lib/auth");
 const api_utils_1 = require("../lib/api-utils");
 const router = (0, express_1.Router)();
@@ -46,21 +47,49 @@ router.post('/', async (req, res) => {
     });
     return (0, api_utils_1.sendOk)(res, team, 201);
 });
-// GET /api/teams/:id - Team detail with career stats
+// GET /api/teams/:id - Team detail with career stats (optionally scoped by seasonId)
 router.get('/:id', async (req, res) => {
     try {
+        await (0, db_1.connectDB)();
         const { id } = req.params;
+        const seasonIdQuery = typeof req.query.seasonId === 'string' && req.query.seasonId.trim() ? req.query.seasonId.trim() : null;
         const team = await db_1.db.team.findUnique({
             where: { id },
             include: { players: { orderBy: [{ jerseyNumber: 'asc' }, { name: 'asc' }] } },
         });
         if (!team)
             return (0, api_utils_1.sendFail)(res, 'Team not found', 404);
-        const playerIds = new Set(team.players.map((p) => p.id));
-        const innings = await db_1.db.innings.findMany({
+        let rosterPlayers = team.players.filter((p) => p.status !== 'MERGED');
+        if (seasonIdQuery) {
+            const memberships = await db_1.TeamMembership.find({ teamId: id, seasonId: seasonIdQuery }).lean();
+            const memPlayerIds = memberships.map((m) => m.playerId);
+            const memMap = new Map(memberships.map((m) => [m.playerId, m]));
+            const docs = memPlayerIds.length > 0 ? await db_1.Player.find({ _id: { $in: memPlayerIds } }).lean() : [];
+            rosterPlayers = docs
+                .sort((a, b) => (a.jerseyNumber ?? 999) - (b.jerseyNumber ?? 999) || a.name.localeCompare(b.name))
+                .map((p) => {
+                const mem = memMap.get(p._id);
+                return {
+                    ...p,
+                    id: p._id,
+                    membershipStatus: mem?.status ?? 'ACTIVE',
+                    designation: mem?.designation ?? 'PLAYER',
+                    joinedAt: mem?.joinedAt ?? null,
+                };
+            });
+        }
+        const playerIds = new Set(rosterPlayers.map((p) => p.id));
+        let allowedMatchIds = null;
+        if (seasonIdQuery) {
+            const seasonMatches = await db_1.Match.find({ seasonId: seasonIdQuery }).select({ _id: 1 }).lean();
+            allowedMatchIds = new Set(seasonMatches.map((m) => m._id));
+        }
+        const allInnings = await db_1.db.innings.findMany({
             where: { OR: [{ battingTeamId: id }, { bowlingTeamId: id }] },
             include: { match: { select: { id: true, status: true } }, balls: true },
         });
+        const innings = allowedMatchIds ? allInnings.filter((inn) => allowedMatchIds.has(inn.matchId)) : allInnings;
+        const availableSeasons = await db_1.Season.find({}).sort({ year: -1 }).lean();
         const stats = new Map();
         const ensure = (pid) => {
             let s = stats.get(pid);
@@ -82,8 +111,8 @@ router.get('/:id', async (req, res) => {
             }
             return s;
         };
-        for (let i = 0; i < team.players.length; i++)
-            ensure(team.players[i].id);
+        for (const p of rosterPlayers)
+            ensure(p.id);
         for (const inn of innings) {
             const batting = inn.battingTeamId === id;
             const matchBalls = inn.balls;
@@ -113,8 +142,7 @@ router.get('/:id', async (req, res) => {
                     else {
                         s.runsConceded += b.runsOffBat;
                     }
-                    if (b.isWicket &&
-                        ['BOWLED', 'CAUGHT', 'CAUGHT_AND_BOWLED', 'LBW', 'STUMPED', 'HIT_WICKET'].includes(b.wicketType || '')) {
+                    if (b.isWicket && stats_service_1.OFFICIAL_BOWLER_WICKETS.has(b.wicketType || '')) {
                         s.wickets++;
                     }
                 }
@@ -130,7 +158,7 @@ router.get('/:id', async (req, res) => {
                         if (playerIds.has(pid))
                             battedInInnings.add(pid);
                     }
-                    if (b.isWicket) {
+                    if (b.isWicket && b.wicketType !== 'RETIRED_HURT' && b.wicketType !== 'ABSENT') {
                         const d = b.dismissedId || b.strikerId;
                         if (playerIds.has(d))
                             dismissedInInnings.add(d);
@@ -151,6 +179,9 @@ router.get('/:id', async (req, res) => {
         }
         return (0, api_utils_1.sendOk)(res, {
             ...team,
+            players: rosterPlayers,
+            selectedSeasonId: seasonIdQuery,
+            seasons: availableSeasons.map((s) => ({ id: s._id, name: s.name, code: s.code, year: s.year, status: s.status })),
             stats: Object.fromEntries([...stats.entries()].filter(([pid]) => playerIds.has(pid))),
         });
     }
@@ -200,6 +231,8 @@ router.delete('/:id', async (req, res) => {
     if (matchCount > 0) {
         return (0, api_utils_1.sendFail)(res, `Cannot delete: this team has ${matchCount} match(es). Delete its matches first.`);
     }
+    await db_1.TeamMembership.deleteMany({ teamId: id });
+    await db_1.Player.updateMany({ teamId: id }, { $set: { teamId: null } });
     await db_1.db.team.delete({ where: { id } });
     return (0, api_utils_1.sendOk)(res, { deleted: true });
 });

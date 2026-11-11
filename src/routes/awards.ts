@@ -10,7 +10,6 @@ const BOWLER_WICKETS = new Set([
   'CAUGHT_AND_BOWLED',
   'LBW',
   'STUMPED',
-  'HIT_WICKET',
 ])
 
 export interface AwardPlayerStat {
@@ -43,6 +42,7 @@ export interface AwardPlayerStat {
   catches: number
   runOuts: number
   stumpings: number
+  catchRunOuts: number
   fieldingDismissals: number
   mvpPoints: number
 }
@@ -88,9 +88,10 @@ function buildDivisionAwards(pool: AwardPlayerStat[]): DivisionAwards {
     .filter((p) => p.fieldingDismissals > 0)
     .sort(
       (a, b) =>
-        b.fieldingDismissals - a.fieldingDismissals ||
-        b.runOuts + b.catches - (a.runOuts + a.catches) ||
+        b.catchRunOuts - a.catchRunOuts ||
         b.catches - a.catches ||
+        b.runOuts - a.runOuts ||
+        b.stumpings - a.stumpings ||
         a.name.localeCompare(b.name)
     )
     .slice(0, 10)
@@ -112,7 +113,7 @@ function buildDivisionAwards(pool: AwardPlayerStat[]): DivisionAwards {
     playerOfTournament: topMvp[0] ?? null,
     bestBatsman: topBatsmen.find((p) => p.runs > 0) ?? null,
     bestBowler: topBowlers.find((p) => p.wickets > 0) ?? null,
-    bestFielder: topFielders[0] ?? null,
+    bestFielder: topFielders.find((p) => p.catchRunOuts > 0) ?? null,
     topMvp,
     topBatsmen,
     topBowlers,
@@ -168,6 +169,7 @@ router.get('/', async (_req, res) => {
         catches: 0,
         runOuts: 0,
         stumpings: 0,
+        catchRunOuts: 0,
         fieldingDismissals: 0,
         mvpPoints: 0,
       })
@@ -247,6 +249,7 @@ router.get('/', async (_req, res) => {
 
     // Finalize derived metrics & MVP points
     const allStats = [...statsMap.values()].map((s) => {
+      const catchRunOuts = s.catches + s.runOuts
       const fieldingDismissals = s.catches + s.runOuts + s.stumpings
       const mvpPoints = s.runs + s.wickets * 20 + fieldingDismissals * 10
       return {
@@ -254,6 +257,7 @@ router.get('/', async (_req, res) => {
         strikeRate: s.ballsFaced > 0 ? round2((s.runs * 100) / s.ballsFaced) : 0,
         overs: `${Math.floor(s.legalBalls / 6)}.${s.legalBalls % 6}`,
         economy: s.legalBalls > 0 ? round2((s.runsConceded * 6) / s.legalBalls) : 0,
+        catchRunOuts,
         fieldingDismissals,
         mvpPoints,
       }

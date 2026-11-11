@@ -34,6 +34,8 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SESSION_DAYS = exports.ADMIN_COOKIE = void 0;
+exports.secretKey = secretKey;
+exports.extractTokenFromRequest = extractTokenFromRequest;
 exports.createSessionToken = createSessionToken;
 exports.getSession = getSession;
 exports.requireAdmin = requireAdmin;
@@ -48,24 +50,16 @@ function secretKey() {
     const secret = process.env.AUTH_SECRET || 'cricket-live-dev-secret-key-change-in-production';
     return new TextEncoder().encode(secret);
 }
-async function createSessionToken(adminId, username) {
-    return new jose_1.SignJWT({ sub: adminId, username })
-        .setProtectedHeader({ alg: 'HS256' })
-        .setIssuedAt()
-        .setExpirationTime(`${exports.SESSION_DAYS}d`)
-        .sign(secretKey());
-}
-async function getSession(req) {
-    let token = req.cookies?.[exports.ADMIN_COOKIE];
+function extractTokenFromRequest(req, cookieName) {
+    let token = req.cookies?.[cookieName];
     if (!token && req.headers.cookie) {
-        const header = req.headers.cookie;
-        for (const part of header.split(';')) {
+        for (const part of req.headers.cookie.split(';')) {
             const idx = part.indexOf('=');
             if (idx === -1)
                 continue;
             const k = part.slice(0, idx).trim();
             const v = part.slice(idx + 1).trim();
-            if (k === exports.ADMIN_COOKIE) {
+            if (k === cookieName) {
                 token = decodeURIComponent(v);
                 break;
             }
@@ -74,6 +68,17 @@ async function getSession(req) {
     if (!token && req.headers.authorization?.startsWith('Bearer ')) {
         token = req.headers.authorization.slice(7).trim();
     }
+    return token;
+}
+async function createSessionToken(adminId, username) {
+    return new jose_1.SignJWT({ sub: adminId, username })
+        .setProtectedHeader({ alg: 'HS256' })
+        .setIssuedAt()
+        .setExpirationTime(`${exports.SESSION_DAYS}d`)
+        .sign(secretKey());
+}
+async function getSession(req) {
+    const token = extractTokenFromRequest(req, exports.ADMIN_COOKIE);
     if (!token)
         return null;
     try {

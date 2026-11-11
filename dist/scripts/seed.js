@@ -10,8 +10,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
  *
  * Run: bun run scripts/seed.ts
  */
-const dotenv_1 = __importDefault(require("dotenv"));
-dotenv_1.default.config();
+require("../src/lib/env");
 const db_1 = require("../src/lib/db");
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const match_service_1 = require("../src/lib/match-service");

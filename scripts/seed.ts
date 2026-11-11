@@ -5,8 +5,7 @@
  *
  * Run: bun run scripts/seed.ts
  */
-import dotenv from 'dotenv'
-dotenv.config()
+import '../src/lib/env'
 
 import { db, connectDB } from '../src/lib/db'
 import bcrypt from 'bcryptjs'

@@ -1,9 +1,80 @@
 import mongoose from 'mongoose'
-import { Admin, Team, Player, Match, Innings, Ball } from '../models'
+import {
+  Admin,
+  Team,
+  Player,
+  Match,
+  Innings,
+  Ball,
+  User,
+  OtpVerification,
+  RefreshToken,
+  Counter,
+  Season,
+  Tournament,
+  TeamMembership,
+  PlayerMatchStat,
+  PlayerCareerStat,
+  Award,
+  PlayerProfileClaim,
+  StatisticsAuditLog,
+} from '../models'
 
-export { Admin, Team, Player, Match, Innings, Ball }
+export {
+  Admin,
+  Team,
+  Player,
+  Match,
+  Innings,
+  Ball,
+  User,
+  OtpVerification,
+  RefreshToken,
+  Counter,
+  Season,
+  Tournament,
+  TeamMembership,
+  PlayerMatchStat,
+  PlayerCareerStat,
+  Award,
+  PlayerProfileClaim,
+  StatisticsAuditLog,
+}
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/cricket_live'
+/**
+ * Execute work inside a MongoDB multi-document transaction when supported (replica sets / Atlas),
+ * falling back cleanly to direct execution if running against a standalone local mongod instance.
+ */
+export async function withMongoTransaction<T>(
+  work: (session: mongoose.ClientSession | null) => Promise<T>
+): Promise<T> {
+  await connectDB()
+  const session = await mongoose.startSession()
+  try {
+    let result!: T
+    await session.withTransaction(async () => {
+      result = await work(session)
+    })
+    return result
+  } catch (err: any) {
+    const msg = String(err?.message || '')
+    const code = err?.code
+    const unsupportedTx =
+      code === 20 ||
+      msg.includes('Transaction numbers are only allowed on a replica set') ||
+      msg.includes('does not support transactions')
+    if (unsupportedTx) {
+      return work(null)
+    }
+    throw err
+  } finally {
+    await session.endSession()
+  }
+}
+
+function getMongoUri(): string {
+  return process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/cricket_live'
+}
 
 /**
  * Connect to MongoDB.
@@ -14,7 +85,7 @@ export async function connectDB(): Promise<typeof mongoose> {
   }
 
   try {
-    const conn = await mongoose.connect(MONGODB_URI)
+    const conn = await mongoose.connect(getMongoUri())
     console.log(`> MongoDB Connected: ${conn.connection.host}/${conn.connection.name}`)
     return conn
   } catch (error) {
