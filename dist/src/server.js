@@ -44,11 +44,14 @@ const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const socket_1 = require("./socket");
 const db_1 = require("./lib/db");
-const auth_1 = __importDefault(require("./routes/auth"));
+const auth_1 = require("./lib/auth");
+const auth_2 = __importDefault(require("./routes/auth"));
 const matches_1 = __importDefault(require("./routes/matches"));
 const players_1 = __importDefault(require("./routes/players"));
 const teams_1 = __importDefault(require("./routes/teams"));
 const admin_1 = __importDefault(require("./routes/admin"));
+const awards_1 = __importDefault(require("./routes/awards"));
+const standings_1 = __importDefault(require("./routes/standings"));
 const app = (0, express_1.default)();
 const server = http_1.default.createServer(app);
 const PORT = process.env.PORT || 5000;
@@ -74,11 +77,13 @@ app.get('/api', (_req, res) => {
     res.json({ ok: true, message: 'Cricket Live API is running' });
 });
 // Route modules
-app.use('/api/auth', auth_1.default);
+app.use('/api/auth', auth_2.default);
 app.use('/api/matches', matches_1.default);
 app.use('/api/players', players_1.default);
 app.use('/api/teams', teams_1.default);
 app.use('/api/admin', admin_1.default);
+app.use('/api/awards', awards_1.default);
+app.use('/api/standings', standings_1.default);
 // Fallback 404
 app.use('/api/*', (_req, res) => {
     res.status(404).json({ ok: false, error: 'Endpoint not found' });
@@ -88,6 +93,7 @@ app.use('/api/*', (_req, res) => {
 async function start() {
     try {
         await (0, db_1.connectDB)();
+        await (0, auth_1.ensureDefaultAdmin)();
     }
     catch (err) {
         console.warn('> Warning: MongoDB connection failed on start. Queries will retry on demand.');

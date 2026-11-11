@@ -12,6 +12,11 @@ const PlayerSchema = new mongoose_1.Schema({
         enum: ['BATTER', 'BOWLER', 'ALL_ROUNDER', 'WICKETKEEPER'],
         default: 'ALL_ROUNDER',
     },
+    gender: {
+        type: String,
+        enum: ['MALE', 'FEMALE'],
+        default: 'MALE',
+    },
     teamId: { type: String, default: null, ref: 'Team', index: true },
     avatarUrl: { type: String, default: null },
     createdAt: { type: Date, default: Date.now },

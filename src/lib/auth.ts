@@ -69,11 +69,29 @@ export async function adminMiddleware(req: Request, res: Response, next: NextFun
   next()
 }
 
+/** Ensure a default admin exists when the admins collection is completely empty. */
+export async function ensureDefaultAdmin(): Promise<void> {
+  const count = await db.admin.count()
+  if (count > 0) return
+  const passwordHash = await import('bcryptjs').then((b) => b.hash('admin123', 10))
+  try {
+    await db.admin.create({ data: { username: 'admin', passwordHash } })
+  } catch (err) {
+    // Ignore duplicate key error if a concurrent request created it first
+    const code = (err as { code?: number })?.code
+    if (code !== 11000) throw err
+  }
+}
+
 export async function verifyAdminCredentials(
   username: string,
   password: string
 ): Promise<{ id: string; username: string } | null> {
-  const admin = await db.admin.findUnique({ where: { username } })
+  let admin = await db.admin.findUnique({ where: { username } })
+  if (!admin && (await db.admin.count()) === 0) {
+    await ensureDefaultAdmin()
+    admin = await db.admin.findUnique({ where: { username } })
+  }
   if (!admin) return null
   const ok = await import('bcryptjs').then((b) => b.compare(password, admin.passwordHash))
   if (!ok) return null

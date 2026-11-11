@@ -38,6 +38,7 @@ exports.createSessionToken = createSessionToken;
 exports.getSession = getSession;
 exports.requireAdmin = requireAdmin;
 exports.adminMiddleware = adminMiddleware;
+exports.ensureDefaultAdmin = ensureDefaultAdmin;
 exports.verifyAdminCredentials = verifyAdminCredentials;
 const jose_1 = require("jose");
 const db_1 = require("./db");
@@ -98,8 +99,28 @@ async function adminMiddleware(req, res, next) {
     req.admin = session;
     next();
 }
+/** Ensure a default admin exists when the admins collection is completely empty. */
+async function ensureDefaultAdmin() {
+    const count = await db_1.db.admin.count();
+    if (count > 0)
+        return;
+    const passwordHash = await Promise.resolve().then(() => __importStar(require('bcryptjs'))).then((b) => b.hash('admin123', 10));
+    try {
+        await db_1.db.admin.create({ data: { username: 'admin', passwordHash } });
+    }
+    catch (err) {
+        // Ignore duplicate key error if a concurrent request created it first
+        const code = err?.code;
+        if (code !== 11000)
+            throw err;
+    }
+}
 async function verifyAdminCredentials(username, password) {
-    const admin = await db_1.db.admin.findUnique({ where: { username } });
+    let admin = await db_1.db.admin.findUnique({ where: { username } });
+    if (!admin && (await db_1.db.admin.count()) === 0) {
+        await ensureDefaultAdmin();
+        admin = await db_1.db.admin.findUnique({ where: { username } });
+    }
     if (!admin)
         return null;
     const ok = await Promise.resolve().then(() => __importStar(require('bcryptjs'))).then((b) => b.compare(password, admin.passwordHash));

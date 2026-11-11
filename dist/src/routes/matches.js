@@ -150,7 +150,7 @@ router.patch('/:id', async (req, res) => {
         },
     });
     await (0, match_service_1.emitMatchUpdate)(updated.id);
-    return (0, api_utils_1.sendOk)(res, updated);
+    return (0, api_utils_1.sendOk)(res, (await (0, match_service_1.buildMatchPayload)(updated.id)) ?? updated);
 });
 // DELETE /api/matches/:id - Delete a match
 router.delete('/:id', async (req, res) => {
@@ -174,8 +174,8 @@ router.post('/:id/toss', async (req, res) => {
         return (0, api_utils_1.unauthorized)(res);
     const { id } = req.params;
     try {
-        const match = await (0, match_service_1.setToss)(id, req.body ?? {});
-        return (0, api_utils_1.sendOk)(res, match);
+        await (0, match_service_1.setToss)(id, req.body ?? {});
+        return (0, api_utils_1.sendOk)(res, await (0, match_service_1.buildMatchPayload)(id));
     }
     catch (e) {
         if (e instanceof match_service_1.MatchError)

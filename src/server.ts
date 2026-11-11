@@ -8,12 +8,14 @@ dotenv.config()
 
 import { initSocketServer } from './socket'
 import { connectDB } from './lib/db'
+import { ensureDefaultAdmin } from './lib/auth'
 import authRouter from './routes/auth'
 import matchesRouter from './routes/matches'
 import playersRouter from './routes/players'
 import teamsRouter from './routes/teams'
 import adminRouter from './routes/admin'
 import awardsRouter from './routes/awards'
+import standingsRouter from './routes/standings'
 
 const app = express()
 const server = http.createServer(app)
@@ -52,6 +54,7 @@ app.use('/api/players', playersRouter)
 app.use('/api/teams', teamsRouter)
 app.use('/api/admin', adminRouter)
 app.use('/api/awards', awardsRouter)
+app.use('/api/standings', standingsRouter)
 
 // Fallback 404
 app.use('/api/*', (_req, res) => {
@@ -64,6 +67,7 @@ initSocketServer(server)
 async function start() {
   try {
     await connectDB()
+    await ensureDefaultAdmin()
   } catch (err) {
     console.warn('> Warning: MongoDB connection failed on start. Queries will retry on demand.')
   }

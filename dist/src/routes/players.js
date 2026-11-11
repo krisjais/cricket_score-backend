@@ -5,6 +5,13 @@ const db_1 = require("../lib/db");
 const auth_1 = require("../lib/auth");
 const api_utils_1 = require("../lib/api-utils");
 const router = (0, express_1.Router)();
+function parseGender(input) {
+    const s = (input ?? '').trim().toLowerCase();
+    if (s === 'female' || s === 'f' || s === 'woman' || s === 'women' || s.startsWith('fem')) {
+        return 'FEMALE';
+    }
+    return 'MALE';
+}
 // GET /api/players - List players (optionally by teamId)
 router.get('/', async (req, res) => {
     try {
@@ -39,11 +46,12 @@ router.post('/', async (req, res) => {
     const role = body.role && ['BATTER', 'BOWLER', 'ALL_ROUNDER', 'WICKETKEEPER'].includes(body.role)
         ? body.role
         : 'ALL_ROUNDER';
+    const gender = parseGender(body.gender);
     const jerseyNumber = body.jerseyNumber !== undefined && body.jerseyNumber !== null && !Number.isNaN(Number(body.jerseyNumber))
         ? Math.floor(Number(body.jerseyNumber))
         : null;
     const avatarUrl = body.avatarUrl?.trim() || null;
-    const player = await db_1.db.player.create({ data: { teamId, name, role, jerseyNumber, avatarUrl } });
+    const player = await db_1.db.player.create({ data: { teamId, name, role, gender, jerseyNumber, avatarUrl } });
     return (0, api_utils_1.sendOk)(res, player, 201);
 });
 // PATCH /api/players/:id - Update player
@@ -59,6 +67,7 @@ router.patch('/:id', async (req, res) => {
     const role = body.role && ['BATTER', 'BOWLER', 'ALL_ROUNDER', 'WICKETKEEPER'].includes(body.role)
         ? body.role
         : player.role;
+    const gender = body.gender !== undefined ? parseGender(body.gender) : (player.gender || 'MALE');
     const jerseyNumber = body.jerseyNumber === undefined
         ? player.jerseyNumber
         : body.jerseyNumber === null || Number.isNaN(Number(body.jerseyNumber))
@@ -82,6 +91,7 @@ router.patch('/:id', async (req, res) => {
         data: {
             name: body.name?.trim() || player.name,
             role,
+            gender,
             jerseyNumber,
             teamId: targetTeamId,
             avatarUrl,
@@ -89,7 +99,25 @@ router.patch('/:id', async (req, res) => {
     });
     return (0, api_utils_1.sendOk)(res, updated);
 });
-// DELETE /api/players/:id - Delete player
+async function handleDeleteAllPlayers(req, res) {
+    const session = await (0, auth_1.requireAdmin)(req);
+    if (!session)
+        return (0, api_utils_1.unauthorized)(res);
+    const force = req.query.force === 'true' || req.body?.force === true;
+    if (!force) {
+        const ballsCount = await db_1.db.ball.count();
+        if (ballsCount > 0) {
+            return (0, api_utils_1.sendFail)(res, `Cannot delete players: ${ballsCount} delivery events are currently recorded in matches. Reset match history first or confirm force deletion.`);
+        }
+    }
+    const result = await db_1.db.player.deleteMany({});
+    return (0, api_utils_1.sendOk)(res, { deletedCount: result.count });
+}
+// DELETE /api/players/all - Delete all players
+router.delete('/all', handleDeleteAllPlayers);
+// DELETE /api/players - Delete all players (bulk collection deletion)
+router.delete('/', handleDeleteAllPlayers);
+// DELETE /api/players/:id - Delete single player
 router.delete('/:id', async (req, res) => {
     const session = await (0, auth_1.requireAdmin)(req);
     if (!session)
@@ -189,6 +217,7 @@ router.post('/import', async (req, res) => {
             rawItems = parsed.map((row) => ({
                 name: row['Name'] || row['name'] || row['Player Name'] || '',
                 skills: row['Skills'] || row['skills'] || row['Role'] || '',
+                gender: row['Gender'] || row['gender'] || row['Category'] || row['category'] || '',
                 soldTo: row['Sold To'] || row['sold to'] || row['Team'] || row['team'] || '',
                 photoUrl: row['Photo URL'] || row['photo url'] || row['Photo'] || row['avatarUrl'] || '',
                 jerseyNumber: row['Jersey Number'] || row['Jersey'] || row['jerseyNumber'] || null,
@@ -244,8 +273,15 @@ router.post('/import', async (req, res) => {
                 newTeamNames.push(tName);
             }
         }
+        // Load existing players to prevent duplicates & backfill gender on re-import
+        const existingPlayers = await db_1.db.player.findMany();
+        const existingMap = new Map();
+        for (const p of existingPlayers) {
+            existingMap.set(`${p.name.toLowerCase().trim()}::${p.teamId || ''}`, p);
+        }
         // Insert or update players
-        let importedCount = 0;
+        let createdCount = 0;
+        let updatedCount = 0;
         for (const item of rawItems) {
             const name = (item.name || '').trim();
             if (!name)
@@ -256,24 +292,45 @@ router.post('/import', async (req, res) => {
                 teamId = teamMap.get(teamName.toLowerCase()).id;
             }
             const role = parseSkillToRole(item.skills || item.role);
+            const gender = parseGender(item.gender);
             const avatarUrl = (item.photoUrl || item.avatarUrl || '').trim() || null;
             const jNum = item.jerseyNumber !== undefined && item.jerseyNumber !== null && !Number.isNaN(Number(item.jerseyNumber))
                 ? Math.floor(Number(item.jerseyNumber))
                 : null;
-            await db_1.db.player.create({
-                data: {
-                    name,
-                    role,
-                    jerseyNumber: jNum,
-                    teamId,
-                    avatarUrl,
-                },
-            });
-            importedCount++;
+            const key = `${name.toLowerCase()}::${teamId || ''}`;
+            const existing = existingMap.get(key);
+            if (existing) {
+                await db_1.db.player.update({
+                    where: { id: existing.id },
+                    data: {
+                        role,
+                        gender,
+                        ...(avatarUrl ? { avatarUrl } : {}),
+                        ...(jNum !== null ? { jerseyNumber: jNum } : {}),
+                    },
+                });
+                updatedCount++;
+            }
+            else {
+                const created = await db_1.db.player.create({
+                    data: {
+                        name,
+                        role,
+                        gender,
+                        jerseyNumber: jNum,
+                        teamId,
+                        avatarUrl,
+                    },
+                });
+                existingMap.set(key, created);
+                createdCount++;
+            }
         }
         const totalCount = await db_1.db.player.count();
         return (0, api_utils_1.sendOk)(res, {
-            importedCount,
+            importedCount: createdCount + updatedCount,
+            createdCount,
+            updatedCount,
             teamsCreated: createdTeamsCount,
             createdTeamNames: newTeamNames,
             totalPlayers: totalCount,
