@@ -53,15 +53,22 @@ interface DivisionAwards {
   bestBatsman: AwardPlayerStat | null
   bestBowler: AwardPlayerStat | null
   bestFielder: AwardPlayerStat | null
+  mostSixes?: AwardPlayerStat | null
+  mostFours?: AwardPlayerStat | null
   topMvp: AwardPlayerStat[]
   topBatsmen: AwardPlayerStat[]
   topBowlers: AwardPlayerStat[]
   topFielders: AwardPlayerStat[]
+  topSixes?: AwardPlayerStat[]
+  topFours?: AwardPlayerStat[]
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
-function buildDivisionAwards(pool: AwardPlayerStat[]): DivisionAwards {
+function buildDivisionAwards(
+  pool: AwardPlayerStat[],
+  includeBoundaryHonors = false
+): DivisionAwards {
   const topBatsmen = [...pool]
     .filter((p) => p.runs > 0 || p.ballsFaced > 0)
     .sort(
@@ -108,12 +115,46 @@ function buildDivisionAwards(pool: AwardPlayerStat[]): DivisionAwards {
     )
     .slice(0, 10)
 
+  const topSixes = includeBoundaryHonors
+    ? [...pool]
+        .filter((p) => p.sixes > 0)
+        .sort(
+          (a, b) =>
+            b.sixes - a.sixes ||
+            b.runs - a.runs ||
+            b.strikeRate - a.strikeRate ||
+            a.name.localeCompare(b.name)
+        )
+        .slice(0, 10)
+    : undefined
+
+  const topFours = includeBoundaryHonors
+    ? [...pool]
+        .filter((p) => p.fours > 0)
+        .sort(
+          (a, b) =>
+            b.fours - a.fours ||
+            b.runs - a.runs ||
+            b.strikeRate - a.strikeRate ||
+            a.name.localeCompare(b.name)
+        )
+        .slice(0, 10)
+    : undefined
+
   return {
     playerCount: pool.length,
     playerOfTournament: topMvp[0] ?? null,
     bestBatsman: topBatsmen.find((p) => p.runs > 0) ?? null,
     bestBowler: topBowlers.find((p) => p.wickets > 0) ?? null,
     bestFielder: topFielders.find((p) => p.catchRunOuts > 0) ?? null,
+    ...(includeBoundaryHonors
+      ? {
+          mostSixes: topSixes?.[0] ?? null,
+          mostFours: topFours?.[0] ?? null,
+          topSixes,
+          topFours,
+        }
+      : {}),
     topMvp,
     topBatsmen,
     topBowlers,
@@ -275,8 +316,8 @@ router.get('/', async (_req, res) => {
         menPlayers: menPool.length,
         womenPlayers: womenPool.length,
       },
-      men: buildDivisionAwards(menPool),
-      women: buildDivisionAwards(womenPool),
+      men: buildDivisionAwards(menPool, true),
+      women: buildDivisionAwards(womenPool, false),
     })
   } catch (err: any) {
     return sendFail(res, err?.message || 'Failed to compute tournament awards', 500)
