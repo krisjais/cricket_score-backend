@@ -8,19 +8,6 @@ const player_dashboard_analytics_1 = require("../lib/player-dashboard-analytics"
 const player_auth_1 = require("../lib/player-auth");
 const stats_service_1 = require("../lib/stats-service");
 const router = (0, express_1.Router)();
-function sanitizeUser(u) {
-    return {
-        id: String(u._id ?? u.id),
-        name: u.name,
-        email: u.email ?? null,
-        mobile: u.mobile ?? null,
-        role: u.role,
-        emailVerified: Boolean(u.emailVerified),
-        mobileVerified: Boolean(u.mobileVerified),
-        playerId: u.playerId ?? null,
-        lastLoginAt: u.lastLoginAt ?? null,
-    };
-}
 const ALLOWED_OTP_PURPOSES = [
     'REGISTER',
     'VERIFY_EMAIL',
@@ -331,7 +318,7 @@ router.post('/register', async (req, res) => {
         });
         const { accessToken } = await (0, player_auth_1.issuePlayerAuthCookies)(res, user, player, req);
         return (0, api_utils_1.sendOk)(res, {
-            user: sanitizeUser(user),
+            user: (0, player_auth_1.sanitizePlayerUser)(user),
             player: player.toObject(),
             accessToken,
         }, 201);
@@ -353,33 +340,16 @@ router.post('/login', async (req, res) => {
         if (!rawIdentifier.trim() || !password) {
             return (0, api_utils_1.sendFail)(res, 'Email/mobile and password are required', 400);
         }
-        const emailCandidate = (0, player_auth_1.normalizeEmail)(rawIdentifier);
-        const mobileCandidate = (0, player_auth_1.normalizeMobile)(rawIdentifier);
-        const user = await db_1.User.findOne({
-            $or: [
-                ...(emailCandidate && emailCandidate.includes('@') ? [{ email: emailCandidate }] : []),
-                ...(mobileCandidate ? [{ mobile: mobileCandidate }] : []),
-            ],
-        });
-        if (!user || !user.isActive) {
-            return (0, api_utils_1.sendFail)(res, 'Invalid credentials', 401);
+        const result = await (0, player_auth_1.authenticatePlayerCredentials)(rawIdentifier, password);
+        if (!result.ok) {
+            return (0, api_utils_1.sendFail)(res, result.error, result.status);
         }
-        const ok = await (0, player_auth_1.verifyPassword)(password, user.passwordHash);
-        if (!ok) {
-            return (0, api_utils_1.sendFail)(res, 'Invalid credentials', 401);
-        }
-        let player = user.playerId ? await db_1.Player.findById(user.playerId) : null;
-        if (!player) {
-            player = await db_1.Player.findOne({ userId: user._id });
-        }
-        if (!player || player.status === 'MERGED') {
-            return (0, api_utils_1.sendFail)(res, 'Player profile unavailable for this account', 403);
-        }
+        const { user, player } = result;
         user.lastLoginAt = new Date();
         await user.save();
         const { accessToken } = await (0, player_auth_1.issuePlayerAuthCookies)(res, user, player, req);
         return (0, api_utils_1.sendOk)(res, {
-            user: sanitizeUser(user),
+            user: (0, player_auth_1.sanitizePlayerUser)(user),
             player: player.toObject(),
             accessToken,
         });
@@ -416,7 +386,7 @@ router.post('/refresh', async (req, res) => {
         await (0, player_auth_1.issuePlayerAuthCookies)(res, user, player, req);
         return (0, api_utils_1.sendOk)(res, {
             refreshed: true,
-            user: sanitizeUser(user),
+            user: (0, player_auth_1.sanitizePlayerUser)(user),
             player: player.toObject(),
         });
     }
@@ -471,7 +441,7 @@ router.get('/me', async (req, res) => {
         }
         return (0, api_utils_1.sendOk)(res, {
             isAuthenticated: true,
-            user: sanitizeUser(user),
+            user: (0, player_auth_1.sanitizePlayerUser)(user),
             player: { ...player, id: player._id },
             currentMembership,
         });
@@ -564,7 +534,7 @@ router.patch('/profile', async (req, res) => {
             };
         }
         await Promise.all([player.save(), user.save()]);
-        return (0, api_utils_1.sendOk)(res, { user: sanitizeUser(user), player: player.toObject() });
+        return (0, api_utils_1.sendOk)(res, { user: (0, player_auth_1.sanitizePlayerUser)(user), player: player.toObject() });
     }
     catch (err) {
         return (0, api_utils_1.sendFail)(res, err?.message || 'Failed to update profile', 500);
@@ -678,7 +648,7 @@ router.get('/dashboard', async (req, res) => {
             activeMatches,
         });
         return (0, api_utils_1.sendOk)(res, {
-            user: sanitizeUser(user),
+            user: (0, player_auth_1.sanitizePlayerUser)(user),
             player: { ...player, id: player._id },
             currentMembership,
             memberships: enrichedMemberships,

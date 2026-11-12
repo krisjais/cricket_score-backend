@@ -58,21 +58,63 @@ async function withMongoTransaction(work) {
 function getMongoUri() {
     return process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/cricket_live';
 }
+let inFlightConnect = null;
+function isTransientMongoError(error) {
+    const err = error;
+    if (!err)
+        return false;
+    if (err.syscall === 'querySrv' || err.code === 'ETIMEOUT' || err.code === 'EAI_AGAIN')
+        return true;
+    if (err.code === 'ESERVFAIL' || err.code === 'ECONNRESET')
+        return true;
+    return err.name === 'MongoServerSelectionError';
+}
 /**
- * Connect to MongoDB.
+ * Connect to MongoDB with in-flight deduplication and brief transient DNS/network retry.
  */
 async function connectDB() {
     if (mongoose_1.default.connection.readyState >= 1) {
         return mongoose_1.default;
     }
-    try {
-        const conn = await mongoose_1.default.connect(getMongoUri());
-        console.log(`> MongoDB Connected: ${conn.connection.host}/${conn.connection.name}`);
-        return conn;
+    if (inFlightConnect) {
+        return inFlightConnect;
     }
-    catch (error) {
-        console.error('> MongoDB Connection Error:', error);
-        throw error;
+    const maxAttempts = 3;
+    const uri = getMongoUri();
+    inFlightConnect = (async () => {
+        let lastError;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                const conn = await mongoose_1.default.connect(uri, {
+                    serverSelectionTimeoutMS: 10000,
+                    connectTimeoutMS: 10000,
+                });
+                console.log(`> MongoDB Connected: ${conn.connection.host}/${conn.connection.name}`);
+                return conn;
+            }
+            catch (error) {
+                lastError = error;
+                if (attempt < maxAttempts && isTransientMongoError(error)) {
+                    await new Promise((resolve) => setTimeout(resolve, attempt * 600));
+                    continue;
+                }
+                break;
+            }
+        }
+        const errObj = lastError;
+        if (errObj?.syscall === 'querySrv' || errObj?.code === 'ETIMEOUT') {
+            console.error('> MongoDB Connection Error: DNS SRV lookup timed out (querySrv ETIMEOUT). If your network/router blocks SRV DNS, switch system DNS to 1.1.1.1 / 8.8.8.8 or use the standard mongodb:// (non-SRV) URI from MongoDB Atlas.', lastError);
+        }
+        else {
+            console.error('> MongoDB Connection Error:', lastError);
+        }
+        throw lastError;
+    })();
+    try {
+        return await inFlightConnect;
+    }
+    finally {
+        inFlightConnect = null;
     }
 }
 /**

@@ -76,21 +76,67 @@ function getMongoUri(): string {
   return process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/cricket_live'
 }
 
+let inFlightConnect: Promise<typeof mongoose> | null = null
+
+function isTransientMongoError(error: unknown): boolean {
+  const err = error as { code?: string; syscall?: string; name?: string; message?: string } | null
+  if (!err) return false
+  if (err.syscall === 'querySrv' || err.code === 'ETIMEOUT' || err.code === 'EAI_AGAIN') return true
+  if (err.code === 'ESERVFAIL' || err.code === 'ECONNRESET') return true
+  return err.name === 'MongoServerSelectionError'
+}
+
 /**
- * Connect to MongoDB.
+ * Connect to MongoDB with in-flight deduplication and brief transient DNS/network retry.
  */
 export async function connectDB(): Promise<typeof mongoose> {
   if (mongoose.connection.readyState >= 1) {
     return mongoose
   }
 
+  if (inFlightConnect) {
+    return inFlightConnect
+  }
+
+  const maxAttempts = 3
+  const uri = getMongoUri()
+
+  inFlightConnect = (async () => {
+    let lastError: unknown
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const conn = await mongoose.connect(uri, {
+          serverSelectionTimeoutMS: 10000,
+          connectTimeoutMS: 10000,
+        })
+        console.log(`> MongoDB Connected: ${conn.connection.host}/${conn.connection.name}`)
+        return conn
+      } catch (error) {
+        lastError = error
+        if (attempt < maxAttempts && isTransientMongoError(error)) {
+          await new Promise((resolve) => setTimeout(resolve, attempt * 600))
+          continue
+        }
+        break
+      }
+    }
+
+    const errObj = lastError as { code?: string; syscall?: string } | null
+    if (errObj?.syscall === 'querySrv' || errObj?.code === 'ETIMEOUT') {
+      console.error(
+        '> MongoDB Connection Error: DNS SRV lookup timed out (querySrv ETIMEOUT). If your network/router blocks SRV DNS, switch system DNS to 1.1.1.1 / 8.8.8.8 or use the standard mongodb:// (non-SRV) URI from MongoDB Atlas.',
+        lastError
+      )
+    } else {
+      console.error('> MongoDB Connection Error:', lastError)
+    }
+    throw lastError
+  })()
+
   try {
-    const conn = await mongoose.connect(getMongoUri())
-    console.log(`> MongoDB Connected: ${conn.connection.host}/${conn.connection.name}`)
-    return conn
-  } catch (error) {
-    console.error('> MongoDB Connection Error:', error)
-    throw error
+    return await inFlightConnect
+  } finally {
+    inFlightConnect = null
   }
 }
 

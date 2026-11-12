@@ -27,6 +27,7 @@ import {
 } from '../lib/player-dashboard-analytics'
 import {
   PLAYER_REFRESH_COOKIE,
+  authenticatePlayerCredentials,
   clearPlayerAuthCookies,
   createOtpChallenge,
   createOtpProofToken,
@@ -37,30 +38,16 @@ import {
   normalizeEmail,
   normalizeMobile,
   requirePlayer,
+  sanitizePlayerUser as sanitizeUser,
   sha256,
   validatePasswordStrength,
   verifyOtpChallenge,
   verifyOtpProofToken,
-  verifyPassword,
 } from '../lib/player-auth'
 import { rebuildCareerStatsForPlayers, writeAuditLog } from '../lib/stats-service'
 import type { OtpChannel, OtpPurpose } from '../models'
 
 const router = Router()
-
-function sanitizeUser(u: any) {
-  return {
-    id: String(u._id ?? u.id),
-    name: u.name,
-    email: u.email ?? null,
-    mobile: u.mobile ?? null,
-    role: u.role,
-    emailVerified: Boolean(u.emailVerified),
-    mobileVerified: Boolean(u.mobileVerified),
-    playerId: u.playerId ?? null,
-    lastLoginAt: u.lastLoginAt ?? null,
-  }
-}
 
 const ALLOWED_OTP_PURPOSES: OtpPurpose[] = [
   'REGISTER',
@@ -440,33 +427,12 @@ router.post('/login', async (req, res) => {
       return sendFail(res, 'Email/mobile and password are required', 400)
     }
 
-    const emailCandidate = normalizeEmail(rawIdentifier)
-    const mobileCandidate = normalizeMobile(rawIdentifier)
-
-    const user = await User.findOne({
-      $or: [
-        ...(emailCandidate && emailCandidate.includes('@') ? [{ email: emailCandidate }] : []),
-        ...(mobileCandidate ? [{ mobile: mobileCandidate }] : []),
-      ],
-    })
-
-    if (!user || !user.isActive) {
-      return sendFail(res, 'Invalid credentials', 401)
+    const result = await authenticatePlayerCredentials(rawIdentifier, password)
+    if (!result.ok) {
+      return sendFail(res, result.error, result.status)
     }
 
-    const ok = await verifyPassword(password, user.passwordHash)
-    if (!ok) {
-      return sendFail(res, 'Invalid credentials', 401)
-    }
-
-    let player = user.playerId ? await Player.findById(user.playerId) : null
-    if (!player) {
-      player = await Player.findOne({ userId: user._id })
-    }
-    if (!player || player.status === 'MERGED') {
-      return sendFail(res, 'Player profile unavailable for this account', 403)
-    }
-
+    const { user, player } = result
     user.lastLoginAt = new Date()
     await user.save()
 

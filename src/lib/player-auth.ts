@@ -419,3 +419,63 @@ export async function requirePlayer(req: Request): Promise<PlayerSession | null>
   }
 }
 
+export function sanitizePlayerUser(u: any) {
+  return {
+    id: String(u._id ?? u.id),
+    name: u.name,
+    email: u.email ?? null,
+    mobile: u.mobile ?? null,
+    role: u.role,
+    emailVerified: Boolean(u.emailVerified),
+    mobileVerified: Boolean(u.mobileVerified),
+    playerId: u.playerId ?? null,
+    lastLoginAt: u.lastLoginAt ?? null,
+  }
+}
+
+export type PlayerCredentialCheckResult =
+  | { ok: true; user: any; player: any }
+  | { ok: false; status: 401 | 403; error: string }
+
+/** Verify player credentials by email or mobile and resolve their active Player profile. */
+export async function authenticatePlayerCredentials(
+  rawIdentifier: string,
+  password: string
+): Promise<PlayerCredentialCheckResult> {
+  const emailCandidate = normalizeEmail(rawIdentifier)
+  const mobileCandidate = normalizeMobile(rawIdentifier)
+
+  const orClauses: Array<Record<string, string>> = []
+  if (emailCandidate && emailCandidate.includes('@')) {
+    orClauses.push({ email: emailCandidate })
+  }
+  if (mobileCandidate && isValidMobile(mobileCandidate)) {
+    orClauses.push({ mobile: mobileCandidate })
+  }
+
+  if (orClauses.length === 0) {
+    return { ok: false, status: 401, error: 'Invalid credentials' }
+  }
+
+  const user = await User.findOne({ $or: orClauses })
+  if (!user || !user.isActive) {
+    return { ok: false, status: 401, error: 'Invalid credentials' }
+  }
+
+  const ok = await verifyPassword(password, user.passwordHash)
+  if (!ok) {
+    return { ok: false, status: 401, error: 'Invalid credentials' }
+  }
+
+  let player = user.playerId ? await Player.findById(user.playerId) : null
+  if (!player) {
+    player = await Player.findOne({ userId: user._id })
+  }
+  if (!player || player.status === 'MERGED') {
+    return { ok: false, status: 403, error: 'Player profile unavailable for this account' }
+  }
+
+  return { ok: true, user, player }
+}
+
+

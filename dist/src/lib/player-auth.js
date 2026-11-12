@@ -22,6 +22,8 @@ exports.issuePlayerAuthCookies = issuePlayerAuthCookies;
 exports.clearPlayerAuthCookies = clearPlayerAuthCookies;
 exports.getPlayerSession = getPlayerSession;
 exports.requirePlayer = requirePlayer;
+exports.sanitizePlayerUser = sanitizePlayerUser;
+exports.authenticatePlayerCredentials = authenticatePlayerCredentials;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const crypto_1 = require("crypto");
 const jose_1 = require("jose");
@@ -373,4 +375,48 @@ async function requirePlayer(req) {
         ...sess,
         playerCode: player.playerCode ?? sess.playerCode,
     };
+}
+function sanitizePlayerUser(u) {
+    return {
+        id: String(u._id ?? u.id),
+        name: u.name,
+        email: u.email ?? null,
+        mobile: u.mobile ?? null,
+        role: u.role,
+        emailVerified: Boolean(u.emailVerified),
+        mobileVerified: Boolean(u.mobileVerified),
+        playerId: u.playerId ?? null,
+        lastLoginAt: u.lastLoginAt ?? null,
+    };
+}
+/** Verify player credentials by email or mobile and resolve their active Player profile. */
+async function authenticatePlayerCredentials(rawIdentifier, password) {
+    const emailCandidate = normalizeEmail(rawIdentifier);
+    const mobileCandidate = normalizeMobile(rawIdentifier);
+    const orClauses = [];
+    if (emailCandidate && emailCandidate.includes('@')) {
+        orClauses.push({ email: emailCandidate });
+    }
+    if (mobileCandidate && isValidMobile(mobileCandidate)) {
+        orClauses.push({ mobile: mobileCandidate });
+    }
+    if (orClauses.length === 0) {
+        return { ok: false, status: 401, error: 'Invalid credentials' };
+    }
+    const user = await db_1.User.findOne({ $or: orClauses });
+    if (!user || !user.isActive) {
+        return { ok: false, status: 401, error: 'Invalid credentials' };
+    }
+    const ok = await verifyPassword(password, user.passwordHash);
+    if (!ok) {
+        return { ok: false, status: 401, error: 'Invalid credentials' };
+    }
+    let player = user.playerId ? await db_1.Player.findById(user.playerId) : null;
+    if (!player) {
+        player = await db_1.Player.findOne({ userId: user._id });
+    }
+    if (!player || player.status === 'MERGED') {
+        return { ok: false, status: 403, error: 'Player profile unavailable for this account' };
+    }
+    return { ok: true, user, player };
 }
