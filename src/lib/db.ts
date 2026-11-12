@@ -1,3 +1,4 @@
+import dns from 'node:dns'
 import mongoose from 'mongoose'
 import {
   Admin,
@@ -82,8 +83,52 @@ function isTransientMongoError(error: unknown): boolean {
   const err = error as { code?: string; syscall?: string; name?: string; message?: string } | null
   if (!err) return false
   if (err.syscall === 'querySrv' || err.code === 'ETIMEOUT' || err.code === 'EAI_AGAIN') return true
-  if (err.code === 'ESERVFAIL' || err.code === 'ECONNRESET') return true
+  if (err.code === 'ESERVFAIL' || err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED') return true
   return err.name === 'MongoServerSelectionError'
+}
+
+/**
+ * Resolve a mongodb+srv:// URI via DNS-over-HTTPS when local/UDP SRV DNS is blocked or refused.
+ */
+async function resolveSrvUriViaDoH(srvUri: string): Promise<string | null> {
+  try {
+    const parsed = new URL(srvUri)
+    const host = parsed.hostname
+    const [srvRes, txtRes] = await Promise.all([
+      fetch(`https://dns.google/resolve?name=${encodeURIComponent(`_mongodb._tcp.${host}`)}&type=SRV`),
+      fetch(`https://dns.google/resolve?name=${encodeURIComponent(host)}&type=TXT`),
+    ])
+    if (!srvRes.ok) return null
+    const srvJson = (await srvRes.json()) as { Answer?: Array<{ data?: string }> }
+    const hosts = (srvJson.Answer ?? [])
+      .map((a) => String(a.data || '').trim().split(/\s+/))
+      .filter((parts) => parts.length >= 4)
+      .map((parts) => `${parts[3].replace(/\.$/, '')}:${parts[2]}`)
+    if (hosts.length === 0) return null
+
+    const params = new URLSearchParams()
+    params.set('tls', 'true')
+    if (txtRes.ok) {
+      const txtJson = (await txtRes.json()) as { Answer?: Array<{ data?: string }> }
+      const rawTxt = (txtJson.Answer ?? [])
+        .map((a) => String(a.data || '').replace(/^"|"$/g, '').replace(/"\s*"/g, ''))
+        .join('')
+      for (const [k, v] of new URLSearchParams(rawTxt).entries()) {
+        params.set(k, v)
+      }
+    }
+    for (const [k, v] of parsed.searchParams.entries()) {
+      params.set(k, v)
+    }
+
+    const auth = parsed.username
+      ? `${parsed.username}${parsed.password ? `:${parsed.password}` : ''}@`
+      : ''
+    const pathname = parsed.pathname && parsed.pathname !== '/' ? parsed.pathname : '/'
+    return `mongodb://${auth}${hosts.join(',')}${pathname}?${params.toString()}`
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -98,14 +143,18 @@ export async function connectDB(): Promise<typeof mongoose> {
     return inFlightConnect
   }
 
-  const maxAttempts = 3
+  const maxAttempts = 4
   const uri = getMongoUri()
 
   inFlightConnect = (async () => {
     let lastError: unknown
+    let connectUri = uri
+    let switchedDns = false
+    let triedDoH = false
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const conn = await mongoose.connect(uri, {
+        const conn = await mongoose.connect(connectUri, {
           serverSelectionTimeoutMS: 10000,
           connectTimeoutMS: 10000,
         })
@@ -113,6 +162,26 @@ export async function connectDB(): Promise<typeof mongoose> {
         return conn
       } catch (error) {
         lastError = error
+        const errInfo = error as { code?: string; syscall?: string } | null
+        if (errInfo?.syscall === 'querySrv' && connectUri.startsWith('mongodb+srv://')) {
+          if (!switchedDns) {
+            switchedDns = true
+            try {
+              dns.setServers(['1.1.1.1', '8.8.8.8'])
+              continue
+            } catch {
+              // ignore and try DoH below
+            }
+          }
+          if (!triedDoH) {
+            triedDoH = true
+            const standardUri = await resolveSrvUriViaDoH(connectUri)
+            if (standardUri) {
+              connectUri = standardUri
+              continue
+            }
+          }
+        }
         if (attempt < maxAttempts && isTransientMongoError(error)) {
           await new Promise((resolve) => setTimeout(resolve, attempt * 600))
           continue
@@ -124,7 +193,7 @@ export async function connectDB(): Promise<typeof mongoose> {
     const errObj = lastError as { code?: string; syscall?: string } | null
     if (errObj?.syscall === 'querySrv' || errObj?.code === 'ETIMEOUT') {
       console.error(
-        '> MongoDB Connection Error: DNS SRV lookup timed out (querySrv ETIMEOUT). If your network/router blocks SRV DNS, switch system DNS to 1.1.1.1 / 8.8.8.8 or use the standard mongodb:// (non-SRV) URI from MongoDB Atlas.',
+        `> MongoDB Connection Error: DNS SRV lookup failed (${errObj?.syscall || ''} ${errObj?.code || 'TIMEOUT'}). Tried fallback DNS (1.1.1.1/8.8.8.8) and DoH. Check network/DNS or set a standard mongodb:// URI in MONGODB_URI.`,
         lastError
       )
     } else {
