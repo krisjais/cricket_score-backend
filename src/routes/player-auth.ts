@@ -126,19 +126,27 @@ router.post('/otp/send', async (req, res) => {
     }
 
     if (purpose === 'REGISTER') {
-      const existing =
-        channel === 'EMAIL'
-          ? await User.findOne({ email: normalized }).select({ _id: 1 }).lean()
-          : await User.findOne({ mobile: normalized }).select({ _id: 1 }).lean()
-      if (existing) {
-        return sendFail(
-          res,
-          channel === 'EMAIL'
-            ? 'An account with this email already exists'
-            : 'An account with this mobile number already exists',
-          409
-        )
+      const extraEmail =
+        channel !== 'EMAIL' && typeof body.email === 'string' ? normalizeEmail(body.email) : null
+      const extraMobile =
+        channel !== 'MOBILE' && typeof body.mobile === 'string' ? normalizeMobile(body.mobile) : null
+
+      if (extraMobile && !isValidMobile(extraMobile)) {
+        return sendFail(res, 'Valid mobile number (8-15 digits) is required')
       }
+      if (extraEmail && !isValidEmail(extraEmail)) {
+        return sendFail(res, 'Please enter a valid email address')
+      }
+
+      const emailToCheck = channel === 'EMAIL' ? normalized : extraEmail
+      const mobileToCheck = channel === 'MOBILE' ? normalized : extraMobile
+
+      const [dupEmail, dupMobile] = await Promise.all([
+        emailToCheck ? User.findOne({ email: emailToCheck }).select({ _id: 1 }).lean() : null,
+        mobileToCheck ? User.findOne({ mobile: mobileToCheck }).select({ _id: 1 }).lean() : null,
+      ])
+      if (dupEmail) return sendFail(res, 'An account with this email is already registered', 409)
+      if (dupMobile) return sendFail(res, 'An account with this mobile number is already registered', 409)
     }
 
     const result = await createOtpChallenge({
