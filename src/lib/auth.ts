@@ -33,11 +33,18 @@ export function extractTokenFromRequest(req: Request, cookieName: string): strin
   return token
 }
 
-export function clearAdminSessionCookie(res: Response) {
+export function isSecureRequest(req?: Request): boolean {
+  if (!req) return process.env.NODE_ENV === 'production'
+  const forwardedProto = req.headers['x-forwarded-proto']
+  const proto = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto
+  return Boolean(req.secure || proto?.split(',')[0]?.trim() === 'https')
+}
+
+export function clearAdminSessionCookie(res: Response, req?: Request) {
   res.clearCookie(ADMIN_COOKIE, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: isSecureRequest(req),
     path: '/',
   })
 }

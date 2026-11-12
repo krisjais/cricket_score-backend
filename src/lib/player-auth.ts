@@ -3,7 +3,7 @@ import { createHash, randomBytes, randomInt } from 'crypto'
 import { SignJWT, jwtVerify } from 'jose'
 import type { Request, Response } from 'express'
 import { OtpVerification, RefreshToken, User, Player } from './db'
-import { clearAdminSessionCookie, extractTokenFromRequest, secretKey } from './auth'
+import { clearAdminSessionCookie, extractTokenFromRequest, isSecureRequest, secretKey } from './auth'
 import type { OtpChannel, OtpPurpose } from '../models'
 
 export const PLAYER_ACCESS_COOKIE = 'cricket_player_access'
@@ -357,15 +357,14 @@ export async function issuePlayerAuthCookies(
     userAgent: req?.headers['user-agent']?.slice(0, 240) ?? null,
   })
 
-  const isProd = process.env.NODE_ENV === 'production'
   const cookieOpts = {
     httpOnly: true,
     sameSite: 'lax' as const,
-    secure: isProd,
+    secure: isSecureRequest(req),
     path: '/',
   }
 
-  clearAdminSessionCookie(res)
+  clearAdminSessionCookie(res, req)
 
   res.cookie(PLAYER_ACCESS_COOKIE, accessToken, {
     ...cookieOpts,
@@ -379,9 +378,8 @@ export async function issuePlayerAuthCookies(
   return { accessToken }
 }
 
-export function clearPlayerAuthCookies(res: Response) {
-  const isProd = process.env.NODE_ENV === 'production'
-  const opts = { httpOnly: true, sameSite: 'lax' as const, secure: isProd, path: '/' }
+export function clearPlayerAuthCookies(res: Response, req?: Request) {
+  const opts = { httpOnly: true, sameSite: 'lax' as const, secure: isSecureRequest(req), path: '/' }
   res.clearCookie(PLAYER_ACCESS_COOKIE, opts)
   res.clearCookie(PLAYER_REFRESH_COOKIE, opts)
 }

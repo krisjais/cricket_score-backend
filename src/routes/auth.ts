@@ -4,6 +4,7 @@ import {
   createSessionToken,
   getSession,
   clearAdminSessionCookie,
+  isSecureRequest,
   ADMIN_COOKIE,
   SESSION_DAYS,
 } from '../lib/auth'
@@ -33,14 +34,14 @@ async function issueAdminLoginSession(
       () => undefined
     )
   }
-  clearPlayerAuthCookies(res)
+  clearPlayerAuthCookies(res, req)
 
   const token = await createSessionToken(admin.id, admin.username)
 
   res.cookie(ADMIN_COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: isSecureRequest(req),
     path: '/',
     maxAge: SESSION_DAYS * 24 * 60 * 60 * 1000,
   })
@@ -112,15 +113,15 @@ router.post('/unified-login', async (req, res) => {
   }
 })
 
-router.post('/logout', (_req, res) => {
-  clearAdminSessionCookie(res)
+router.post('/logout', (req, res) => {
+  clearAdminSessionCookie(res, req)
   return sendOk(res, { loggedOut: true })
 })
 
 router.get('/me', async (req, res) => {
   const session = await getSession(req)
   if (!session && req.cookies?.[ADMIN_COOKIE]) {
-    clearAdminSessionCookie(res)
+    clearAdminSessionCookie(res, req)
   }
   return sendOk(res, { isAdmin: !!session, username: session?.username ?? null })
 })
