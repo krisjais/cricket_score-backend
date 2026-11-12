@@ -45,6 +45,7 @@ const socket_1 = require("./socket");
 const db_1 = require("./lib/db");
 const auth_1 = require("./lib/auth");
 const bootstrap_1 = require("./lib/bootstrap");
+const cors_2 = require("./lib/cors");
 const auth_2 = __importDefault(require("./routes/auth"));
 const player_auth_1 = __importDefault(require("./routes/player-auth"));
 const matches_1 = __importDefault(require("./routes/matches"));
@@ -58,20 +59,12 @@ const tournaments_1 = __importDefault(require("./routes/tournaments"));
 const memberships_1 = __importDefault(require("./routes/memberships"));
 const leaderboards_1 = __importDefault(require("./routes/leaderboards"));
 const app = (0, express_1.default)();
+app.set('trust proxy', 1);
 const server = http_1.default.createServer(app);
 const PORT = process.env.PORT || 5000;
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
 // Middleware
 app.use((0, cors_1.default)({
-    origin: (origin, callback) => {
-        // allow requests with no origin (like mobile apps, curl, or same-origin)
-        if (!origin || origin === CLIENT_URL || origin.startsWith('http://localhost:')) {
-            callback(null, true);
-        }
-        else {
-            callback(null, true); // permissive for local dev
-        }
-    },
+    origin: cors_2.corsOriginHandler,
     credentials: true,
 }));
 app.use((0, cookie_parser_1.default)());

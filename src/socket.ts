@@ -1,11 +1,12 @@
 import type { Server as HttpServer } from 'http'
 import { Server, Socket } from 'socket.io'
 import { setSocketServer } from './lib/broadcast'
+import { corsOriginHandler } from './lib/cors'
 
 export function initSocketServer(httpServer: HttpServer): Server {
   const io = new Server(httpServer, {
     cors: {
-      origin: process.env.CLIENT_URL || '*',
+      origin: corsOriginHandler,
       methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
       credentials: true,
     },

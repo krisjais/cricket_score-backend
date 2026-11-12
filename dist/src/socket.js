@@ -3,10 +3,11 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.initSocketServer = initSocketServer;
 const socket_io_1 = require("socket.io");
 const broadcast_1 = require("./lib/broadcast");
+const cors_1 = require("./lib/cors");
 function initSocketServer(httpServer) {
     const io = new socket_io_1.Server(httpServer, {
         cors: {
-            origin: process.env.CLIENT_URL || '*',
+            origin: cors_1.corsOriginHandler,
             methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
             credentials: true,
         },

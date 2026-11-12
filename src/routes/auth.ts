@@ -40,6 +40,7 @@ async function issueAdminLoginSession(
   res.cookie(ADMIN_COOKIE, token, {
     httpOnly: true,
     sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
     path: '/',
     maxAge: SESSION_DAYS * 24 * 60 * 60 * 1000,
   })

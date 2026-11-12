@@ -37,6 +37,7 @@ export function clearAdminSessionCookie(res: Response) {
   res.clearCookie(ADMIN_COOKIE, {
     httpOnly: true,
     sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
     path: '/',
   })
 }

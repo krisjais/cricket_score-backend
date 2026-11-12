@@ -8,6 +8,7 @@ import { initSocketServer } from './socket'
 import { connectDB } from './lib/db'
 import { ensureDefaultAdmin } from './lib/auth'
 import { ensurePlayerSystemBootstrap } from './lib/bootstrap'
+import { corsOriginHandler } from './lib/cors'
 import authRouter from './routes/auth'
 import playerAuthRouter from './routes/player-auth'
 import matchesRouter from './routes/matches'
@@ -22,22 +23,15 @@ import membershipsRouter from './routes/memberships'
 import leaderboardsRouter from './routes/leaderboards'
 
 const app = express()
+app.set('trust proxy', 1)
 const server = http.createServer(app)
 
 const PORT = process.env.PORT || 5000
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000'
 
 // Middleware
 app.use(
   cors({
-    origin: (origin, callback) => {
-      // allow requests with no origin (like mobile apps, curl, or same-origin)
-      if (!origin || origin === CLIENT_URL || origin.startsWith('http://localhost:')) {
-        callback(null, true)
-      } else {
-        callback(null, true) // permissive for local dev
-      }
-    },
+    origin: corsOriginHandler,
     credentials: true,
   })
 )
