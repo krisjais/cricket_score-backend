@@ -40,8 +40,8 @@ export async function ensureDefaultSeasonAndTournament() {
   let tournament = await Tournament.findOne({ seasonId: season._id }).sort({ createdAt: 1 }).lean()
   if (!tournament) {
     const createdT = await Tournament.create({
-      name: `Nexcore Premier League ${season.year}`,
-      shortName: `NPL-${String(season.year).slice(-2)}`,
+      name: `Alliance Premier League ${season.year}`,
+      shortName: `APL-${String(season.year).slice(-2)}`,
       seasonId: season._id,
       format: 'T20',
       status: 'ACTIVE',

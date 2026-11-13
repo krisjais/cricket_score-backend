@@ -121,7 +121,7 @@ export function buildAnnouncementEmailHtml(opts: {
           <!-- Header Banner -->
           <div style="background:#7A1426;padding:24px 28px;color:#ffffff;border-bottom:3px solid #FBBF24;">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-              <span style="font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#FDE68A;">Nexcore Premier League</span>
+              <span style="font-size:11px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#FDE68A;">Alliance Premier League</span>
               <span style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.8);">${escapeHtml(opts.seasonName)}</span>
             </div>
             <h1 style="margin:10px 0 2px;font-size:20px;font-weight:900;color:#ffffff;line-height:1.2;">${escapeHtml(opts.teamName)}</h1>
