@@ -16,6 +16,11 @@ import { requireAdmin } from '../lib/auth'
 import { sendOk, sendFail, unauthorized } from '../lib/api-utils'
 import { ensureActiveMembershipForPlayer } from '../lib/bootstrap'
 import { mergePlayersAndRecalculate, rebuildCareerStatsForPlayers, writeAuditLog } from '../lib/stats-service'
+import {
+  getActiveCaptaincy,
+  getPlayerCaptaincyHistory,
+  computeCaptainBadges,
+} from '../lib/captaincy-service'
 
 const router = Router()
 
@@ -203,6 +208,12 @@ router.get('/public/:playerCodeOrId', async (req, res) => {
       privacy: publicPrivacy,
     }
 
+    const [activeCaptaincy, captaincyHistory, captainBadges] = await Promise.all([
+      getActiveCaptaincy(player._id),
+      getPlayerCaptaincyHistory(player._id),
+      computeCaptainBadges(player._id),
+    ])
+
     return sendOk(res, {
       isPrivate: false,
       player: publicPlayer,
@@ -211,6 +222,9 @@ router.get('/public/:playerCodeOrId', async (req, res) => {
       career,
       recentMatches,
       awards,
+      activeCaptaincy: activeCaptaincy.isCaptain ? activeCaptaincy : null,
+      captaincyHistory,
+      captainBadges,
     })
   } catch (err: any) {
     return sendFail(res, err?.message || 'Failed to load public profile', 500)
@@ -289,13 +303,16 @@ router.get('/:id/career', async (req, res) => {
       career = await PlayerCareerStat.findOne({ playerId: player._id }).lean()
     }
 
-    const [memberships, matchStats, teams, seasons, tournaments] = await Promise.all([
-      TeamMembership.find({ playerId: player._id }).sort({ joinedAt: -1 }).lean(),
-      PlayerMatchStat.find({ playerId: player._id }).sort({ matchDate: -1 }).lean(),
-      Team.find({}).lean(),
-      Season.find({}).lean(),
-      Tournament.find({}).lean(),
-    ])
+    const [memberships, matchStats, teams, seasons, tournaments, captaincyHistory, captainBadges] =
+      await Promise.all([
+        TeamMembership.find({ playerId: player._id }).sort({ joinedAt: -1 }).lean(),
+        PlayerMatchStat.find({ playerId: player._id }).sort({ matchDate: -1 }).lean(),
+        Team.find({}).lean(),
+        Season.find({}).lean(),
+        Tournament.find({}).lean(),
+        getPlayerCaptaincyHistory(player._id),
+        computeCaptainBadges(player._id),
+      ])
     const tMap = new Map(teams.map((t) => [t._id, t]))
     const sMap = new Map(seasons.map((s) => [s._id, s]))
     const trMap = new Map(tournaments.map((t) => [t._id, t]))
@@ -303,6 +320,8 @@ router.get('/:id/career', async (req, res) => {
     return sendOk(res, {
       player: { ...player, id: player._id },
       career,
+      captaincyHistory,
+      captainBadges,
       memberships: memberships.map((m) => ({
         ...m,
         id: m._id,

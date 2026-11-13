@@ -26,6 +26,11 @@ import {
   type DashboardMatchHistoryEntry,
 } from '../lib/player-dashboard-analytics'
 import {
+  getActiveCaptaincy,
+  getPlayerCaptaincyHistory,
+  computeCaptainBadges,
+} from '../lib/captaincy-service'
+import {
   PLAYER_REFRESH_COOKIE,
   authenticatePlayerCredentials,
   clearPlayerAuthCookies,
@@ -462,7 +467,12 @@ router.post('/refresh', async (req, res) => {
     await connectDB()
     const rawRefresh: string | undefined = req.cookies?.[PLAYER_REFRESH_COOKIE]
     if (!rawRefresh) {
-      return sendFail(res, 'Refresh token missing', 401)
+      return sendOk(res, {
+        refreshed: false,
+        isAuthenticated: false,
+        user: null,
+        player: null,
+      })
     }
 
     const tokenDoc = await RefreshToken.findOne({
@@ -545,11 +555,14 @@ router.get('/me', async (req, res) => {
       }
     }
 
+    const activeCaptaincy = await getActiveCaptaincy(player._id)
+
     return sendOk(res, {
       isAuthenticated: true,
       user: sanitizeUser(user),
       player: { ...player, id: player._id },
       currentMembership,
+      activeCaptaincy: activeCaptaincy.isCaptain ? activeCaptaincy : null,
     })
   } catch (err: any) {
     return sendFail(res, err?.message || 'Failed to load profile session', 500)
@@ -773,6 +786,24 @@ router.get('/dashboard', async (req, res) => {
       activeMatches,
     })
 
+    const [activeCaptaincy, captaincyHistory, captainBadges] = await Promise.all([
+      getActiveCaptaincy(player._id),
+      getPlayerCaptaincyHistory(player._id),
+      computeCaptainBadges(player._id),
+    ])
+
+    const mergedAchievements = [
+      ...captainBadges.map((cb) => ({
+        id: cb.id,
+        key: cb.key,
+        title: cb.title,
+        subtitle: cb.subtitle,
+        category: 'CAREER' as const,
+        achievedAt: cb.achievedAt,
+      })),
+      ...achievements,
+    ]
+
     return sendOk(res, {
       user: sanitizeUser(user),
       player: { ...player, id: player._id },
@@ -783,10 +814,12 @@ router.get('/dashboard', async (req, res) => {
       performanceSeries,
       seasonPerformance,
       personalBests,
-      achievements,
+      achievements: mergedAchievements,
       upcomingMatches,
       awards,
       claims: pendingClaims,
+      activeCaptaincy: activeCaptaincy.isCaptain ? activeCaptaincy : null,
+      captaincyHistory,
     })
   } catch (err: any) {
     return sendFail(res, err?.message || 'Failed to load player dashboard', 500)

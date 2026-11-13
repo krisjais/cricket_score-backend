@@ -364,8 +364,6 @@ export async function issuePlayerAuthCookies(
     path: '/',
   }
 
-  clearAdminSessionCookie(res, req)
-
   res.cookie(PLAYER_ACCESS_COOKIE, accessToken, {
     ...cookieOpts,
     maxAge: 2 * 60 * 60 * 1000,
@@ -435,20 +433,59 @@ export type PlayerCredentialCheckResult =
   | { ok: true; user: any; player: any }
   | { ok: false; status: 401 | 403; error: string }
 
-/** Verify player credentials by email or mobile and resolve their active Player profile. */
+/** Verify player credentials by email, mobile, or player code and resolve their active Player profile. */
 export async function authenticatePlayerCredentials(
   rawIdentifier: string,
   password: string
 ): Promise<PlayerCredentialCheckResult> {
-  const emailCandidate = normalizeEmail(rawIdentifier)
-  const mobileCandidate = normalizeMobile(rawIdentifier)
-
-  const orClauses: Array<Record<string, string>> = []
-  if (emailCandidate && emailCandidate.includes('@')) {
-    orClauses.push({ email: emailCandidate })
+  const trimmed = typeof rawIdentifier === 'string' ? rawIdentifier.trim() : ''
+  const trimmedPassword = typeof password === 'string' ? password.trim() : ''
+  if (!trimmed || !trimmedPassword) {
+    return { ok: false, status: 401, error: 'Identifier and password are required' }
   }
-  if (mobileCandidate && isValidMobile(mobileCandidate)) {
-    orClauses.push({ mobile: mobileCandidate })
+
+  const emailCandidate = normalizeEmail(trimmed)
+  const digits = trimmed.replace(/\D/g, '')
+
+  const orClauses: Array<Record<string, any>> = []
+
+  // 1. Email check (case-insensitive regex)
+  if (emailCandidate && emailCandidate.includes('@')) {
+    const escaped = emailCandidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    orClauses.push({ email: { $regex: new RegExp(`^${escaped}$`, 'i') } })
+  }
+
+  // 2. Mobile check: match all common formats (+91, without +91, last 10 digits)
+  if (digits.length >= 10) {
+    const last10 = digits.slice(-10)
+    orClauses.push({
+      mobile: {
+        $in: [
+          last10,
+          `+91${last10}`,
+          `91${last10}`,
+          `+${digits}`,
+          digits,
+          trimmed,
+        ],
+      },
+    })
+  }
+
+  // 3. Player Code check: if identifier matches a registered player's code
+  if (!emailCandidate?.includes('@') && digits.length < 10) {
+    const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const matchingPlayer = await Player.findOne({
+      playerCode: { $regex: new RegExp(`^${escaped}$`, 'i') },
+      status: { $ne: 'MERGED' },
+    }).lean()
+
+    if (matchingPlayer) {
+      if (matchingPlayer.userId) {
+        orClauses.push({ _id: matchingPlayer.userId })
+      }
+      orClauses.push({ playerId: matchingPlayer._id })
+    }
   }
 
   if (orClauses.length === 0) {
@@ -460,7 +497,11 @@ export async function authenticatePlayerCredentials(
     return { ok: false, status: 401, error: 'Invalid credentials' }
   }
 
-  const ok = await verifyPassword(password, user.passwordHash)
+  // Try trimmed password first, then raw password as fallback
+  let ok = await verifyPassword(trimmedPassword, user.passwordHash)
+  if (!ok && password !== trimmedPassword) {
+    ok = await verifyPassword(password, user.passwordHash)
+  }
   if (!ok) {
     return { ok: false, status: 401, error: 'Invalid credentials' }
   }

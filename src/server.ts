@@ -5,6 +5,7 @@ import cors from 'cors'
 import cookieParser from 'cookie-parser'
 
 import { initSocketServer } from './socket'
+import { recoverPendingDeliveryJobs } from './lib/notification-service'
 import { connectDB } from './lib/db'
 import { ensureDefaultAdmin } from './lib/auth'
 import { ensurePlayerSystemBootstrap } from './lib/bootstrap'
@@ -21,6 +22,8 @@ import seasonsRouter from './routes/seasons'
 import tournamentsRouter from './routes/tournaments'
 import membershipsRouter from './routes/memberships'
 import leaderboardsRouter from './routes/leaderboards'
+import captainsRouter from './routes/captains'
+import notificationsRouter from './routes/notifications'
 
 const app = express()
 app.set('trust proxy', 1)
@@ -58,6 +61,8 @@ app.use('/api/seasons', seasonsRouter)
 app.use('/api/tournaments', tournamentsRouter)
 app.use('/api/memberships', membershipsRouter)
 app.use('/api/leaderboards', leaderboardsRouter)
+app.use('/api/captains', captainsRouter)
+app.use('/api/notifications', notificationsRouter)
 
 // Fallback 404
 app.use('/api/*', (_req, res) => {
@@ -72,6 +77,7 @@ async function start() {
     await connectDB()
     await ensureDefaultAdmin()
     await ensurePlayerSystemBootstrap()
+    void recoverPendingDeliveryJobs()
   } catch (err) {
     console.warn('> Warning: MongoDB connection failed on start. Queries will retry on demand.')
   }

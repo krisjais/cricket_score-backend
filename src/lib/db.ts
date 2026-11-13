@@ -19,6 +19,15 @@ import {
   Award,
   PlayerProfileClaim,
   StatisticsAuditLog,
+  CaptaincyAssignment,
+  CaptaincyAuditLog,
+  TeamAnnouncement,
+  PlayingXISubmission,
+  PlayerAvailability,
+  InAppNotification,
+  NotificationPreferences,
+  NotificationDeliveryJob,
+  PushSubscription,
 } from '../models'
 
 export {
@@ -40,6 +49,15 @@ export {
   Award,
   PlayerProfileClaim,
   StatisticsAuditLog,
+  CaptaincyAssignment,
+  CaptaincyAuditLog,
+  TeamAnnouncement,
+  PlayingXISubmission,
+  PlayerAvailability,
+  InAppNotification,
+  NotificationPreferences,
+  NotificationDeliveryJob,
+  PushSubscription,
 }
 
 /**

@@ -26,16 +26,6 @@ async function issueAdminLoginSession(
   res: Response,
   admin: { id: string; username: string }
 ) {
-  // Enforce single active role per browser: revoke & clear any player session when signing in as Admin
-  const rawRefresh: string | undefined = req.cookies?.[PLAYER_REFRESH_COOKIE]
-  if (rawRefresh) {
-    await connectDB()
-    await RefreshToken.updateOne({ tokenHash: sha256(rawRefresh) }, { $set: { revokedAt: new Date() } }).catch(
-      () => undefined
-    )
-  }
-  clearPlayerAuthCookies(res, req)
-
   const token = await createSessionToken(admin.id, admin.username)
 
   res.cookie(ADMIN_COOKIE, token, {

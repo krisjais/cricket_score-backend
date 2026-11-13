@@ -33,6 +33,16 @@ export function initSocketServer(httpServer: HttpServer): Server {
       void socket.leave('matches')
     })
 
+    socket.on('subscribe:player', (playerId: string) => {
+      if (typeof playerId !== 'string' || !playerId) return
+      void socket.join(`player:${playerId}`)
+    })
+
+    socket.on('unsubscribe:player', (playerId: string) => {
+      if (typeof playerId !== 'string' || !playerId) return
+      void socket.leave(`player:${playerId}`)
+    })
+
     socket.on('error', (error) => {
       console.error(`Socket error (${socket.id}):`, error)
     })

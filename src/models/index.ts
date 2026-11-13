@@ -21,3 +21,50 @@ export { PlayerCareerStat, type IPlayerCareerStat, type ICareerBreakdownRow } fr
 export { Award, type IAward, type AwardScope, type AwardType } from './Award'
 export { PlayerProfileClaim, type IPlayerProfileClaim, type ClaimStatus } from './PlayerProfileClaim'
 export { StatisticsAuditLog, type IStatisticsAuditLog, type AuditAction } from './StatisticsAuditLog'
+export {
+  CaptaincyAssignment,
+  type ICaptaincyAssignment,
+  type CaptaincyStatus,
+} from './CaptaincyAssignment'
+export {
+  CaptaincyAuditLog,
+  type ICaptaincyAuditLog,
+  type CaptaincyAuditAction,
+} from './CaptaincyAuditLog'
+export {
+  TeamAnnouncement,
+  type ITeamAnnouncement,
+  type AnnouncementPriority,
+  type AnnouncementCategory,
+  type AnnouncementStatus,
+} from './TeamAnnouncement'
+export {
+  InAppNotification,
+  type IInAppNotification,
+} from './InAppNotification'
+export {
+  NotificationPreferences,
+  type INotificationPreferences,
+  type ICategoryPreferences,
+} from './NotificationPreferences'
+export {
+  NotificationDeliveryJob,
+  type INotificationDeliveryJob,
+  type DeliveryChannel,
+  type DeliveryJobStatus,
+} from './NotificationDeliveryJob'
+export {
+  PushSubscription,
+  type IPushSubscription,
+  type IPushSubscriptionKeys,
+} from './PushSubscription'
+export {
+  PlayingXISubmission,
+  type IPlayingXISubmission,
+  type PlayingXIStatus,
+} from './PlayingXISubmission'
+export {
+  PlayerAvailability,
+  type IPlayerAvailability,
+  type AvailabilityStatus,
+} from './PlayerAvailability'
