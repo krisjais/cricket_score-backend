@@ -153,6 +153,10 @@ export async function ensurePlayerSystemBootstrap(): Promise<void> {
       // 4. Clean up any orphaned player user accounts whose profiles were deleted
       const { cleanupOrphanedPlayerAccounts } = await import('./player-cleanup')
       await cleanupOrphanedPlayerAccounts()
+
+      // 5. Purge any lingering test seasons created by test runners (preserving real seasons)
+      const { cleanupTestSeasons } = await import('./season-cleanup')
+      await cleanupTestSeasons()
     } catch (err) {
       bootstrapPromise = null
       console.error('> Bootstrap migration error:', err)

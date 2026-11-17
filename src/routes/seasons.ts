@@ -115,5 +115,53 @@ router.patch('/:id', async (req, res) => {
   }
 })
 
+// DELETE /api/seasons/:id - Delete season (cannot delete default season or season with matches)
+router.delete('/:id', async (req, res) => {
+  const session = await requireAdmin(req)
+  if (!session) return unauthorized(res)
+
+  try {
+    await connectDB()
+    const season = await Season.findById(req.params.id)
+    if (!season) return sendFail(res, 'Season not found', 404)
+
+    if (season.isDefault) {
+      return sendFail(res, 'Cannot delete the default active season. Designate another season as default first.', 400)
+    }
+
+    const { Match, Tournament, TeamMembership } = await import('../lib/db')
+    const matchCount = await Match.countDocuments({ seasonId: season._id })
+    if (matchCount > 0) {
+      return sendFail(res, `Cannot delete season: ${matchCount} match(es) are associated with it. Delete or reassign matches first.`, 400)
+    }
+
+    await Promise.all([
+      Tournament.deleteMany({ seasonId: season._id }),
+      TeamMembership.deleteMany({ seasonId: season._id }),
+      CaptaincyAssignment.deleteMany({ seasonId: season._id }),
+      CaptaincyAuditLog.deleteMany({ seasonId: season._id }),
+      Season.findByIdAndDelete(season._id),
+    ])
+
+    return sendOk(res, { deleted: true, id: season._id })
+  } catch (err: any) {
+    return sendFail(res, err?.message || 'Failed to delete season', 500)
+  }
+})
+
+// POST /api/seasons/cleanup-test-seasons - Purge all lingering test seasons
+router.post('/cleanup-test-seasons', async (req, res) => {
+  const session = await requireAdmin(req)
+  if (!session) return unauthorized(res)
+
+  try {
+    const { cleanupTestSeasons } = await import('../lib/season-cleanup')
+    const purgedCount = await cleanupTestSeasons()
+    return sendOk(res, { purgedCount })
+  } catch (err: any) {
+    return sendFail(res, err?.message || 'Failed to clean test seasons', 500)
+  }
+})
+
 export default router
 

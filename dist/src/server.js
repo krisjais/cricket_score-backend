@@ -71,8 +71,8 @@ app.use((0, cors_1.default)({
     credentials: true,
 }));
 app.use((0, cookie_parser_1.default)());
-app.use(express_1.default.json({ limit: '5mb' }));
-app.use(express_1.default.urlencoded({ extended: true }));
+app.use(express_1.default.json({ limit: '20mb' }));
+app.use(express_1.default.urlencoded({ limit: '20mb', extended: true }));
 // Health check
 app.get('/api', (_req, res) => {
     res.json({ ok: true, message: 'Cricket Live API is running' });
@@ -95,6 +95,15 @@ app.use('/api/notifications', notifications_1.default);
 // Fallback 404
 app.use('/api/*', (_req, res) => {
     res.status(404).json({ ok: false, error: 'Endpoint not found' });
+});
+// Global API Error Handler
+app.use((err, _req, res, _next) => {
+    console.error('[API Error]', err);
+    const status = typeof err.status === 'number' ? err.status : 500;
+    res.status(status).json({
+        ok: false,
+        error: err.type === 'entity.too.large' ? 'Uploaded payload is too large' : err.message || 'Internal server error',
+    });
 });
 // Initialize Socket.IO
 (0, socket_1.initSocketServer)(server);

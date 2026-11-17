@@ -41,6 +41,7 @@ async function runTests() {
     const port = server.address().port;
     const baseUrl = `http://127.0.0.1:${port}`;
     const runId = (0, node_crypto_1.randomUUID)().slice(0, 8);
+    let testSeasonId = null;
     try {
         // -------------------------------------------------------------------------
         // 1. SETUP FIXTURE DATA: 1 Season, 2 Teams, Captain & Squad Players
@@ -52,6 +53,7 @@ async function runTests() {
             year: 2026,
             status: 'ACTIVE',
         });
+        testSeasonId = season._id;
         const teamA = await db_1.Team.create({
             name: `Royal Knights ${runId}`,
             shortName: `RK-${runId.slice(0, 3)}`,
@@ -357,6 +359,22 @@ async function runTests() {
         console.log('=============================================================\n');
     }
     finally {
+        console.log('\nCleaning up test fixtures for runId:', runId);
+        await Promise.allSettled([
+            db_1.Season.deleteMany({ code: `S-${runId}` }),
+            db_1.Team.deleteMany({ name: new RegExp(runId, 'i') }),
+            db_1.Player.deleteMany({ name: new RegExp(runId, 'i') }),
+            db_1.User.deleteMany({ email: new RegExp(runId, 'i') }),
+            ...(testSeasonId
+                ? [
+                    db_1.TeamMembership.deleteMany({ seasonId: testSeasonId }),
+                    db_1.CaptaincyAssignment.deleteMany({ seasonId: testSeasonId }),
+                    db_1.TeamAnnouncement.deleteMany({ seasonId: testSeasonId }),
+                ]
+                : []),
+            db_1.InAppNotification.deleteMany({ title: new RegExp(runId, 'i') }),
+            db_1.PushSubscription.deleteMany({ endpoint: new RegExp(runId, 'i') }),
+        ]);
         server.close();
     }
 }

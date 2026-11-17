@@ -156,6 +156,9 @@ async function ensurePlayerSystemBootstrap() {
             // 4. Clean up any orphaned player user accounts whose profiles were deleted
             const { cleanupOrphanedPlayerAccounts } = await Promise.resolve().then(() => __importStar(require('./player-cleanup')));
             await cleanupOrphanedPlayerAccounts();
+            // 5. Purge any lingering test seasons created by test runners (preserving real seasons)
+            const { cleanupTestSeasons } = await Promise.resolve().then(() => __importStar(require('./season-cleanup')));
+            await cleanupTestSeasons();
         }
         catch (err) {
             bootstrapPromise = null;

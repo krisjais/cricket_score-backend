@@ -40,8 +40,8 @@ app.use(
 )
 
 app.use(cookieParser())
-app.use(express.json({ limit: '5mb' }))
-app.use(express.urlencoded({ extended: true }))
+app.use(express.json({ limit: '20mb' }))
+app.use(express.urlencoded({ limit: '20mb', extended: true }))
 
 // Health check
 app.get('/api', (_req, res) => {
@@ -67,6 +67,16 @@ app.use('/api/notifications', notificationsRouter)
 // Fallback 404
 app.use('/api/*', (_req, res) => {
   res.status(404).json({ ok: false, error: 'Endpoint not found' })
+})
+
+// Global API Error Handler
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('[API Error]', err)
+  const status = typeof err.status === 'number' ? err.status : 500
+  res.status(status).json({
+    ok: false,
+    error: err.type === 'entity.too.large' ? 'Uploaded payload is too large' : err.message || 'Internal server error',
+  })
 })
 
 // Initialize Socket.IO

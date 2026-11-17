@@ -68,6 +68,7 @@ async function runTests() {
   const baseUrl = `http://127.0.0.1:${port}`
 
   const runId = randomUUID().slice(0, 8)
+  let testSeasonId: any = null
 
   try {
     // -------------------------------------------------------------------------
@@ -81,6 +82,7 @@ async function runTests() {
       year: 2026,
       status: 'ACTIVE',
     })
+    testSeasonId = season._id
 
     const teamA = await Team.create({
       name: `Royal Knights ${runId}`,
@@ -462,6 +464,22 @@ async function runTests() {
     console.log('🎉 ALL NOTIFICATION SYSTEM VERIFICATION TESTS PASSED!')
     console.log('=============================================================\n')
   } finally {
+    console.log('\nCleaning up test fixtures for runId:', runId)
+    await Promise.allSettled([
+      Season.deleteMany({ code: `S-${runId}` }),
+      Team.deleteMany({ name: new RegExp(runId, 'i') }),
+      Player.deleteMany({ name: new RegExp(runId, 'i') }),
+      User.deleteMany({ email: new RegExp(runId, 'i') }),
+      ...(testSeasonId
+        ? [
+            TeamMembership.deleteMany({ seasonId: testSeasonId }),
+            CaptaincyAssignment.deleteMany({ seasonId: testSeasonId }),
+            TeamAnnouncement.deleteMany({ seasonId: testSeasonId }),
+          ]
+        : []),
+      InAppNotification.deleteMany({ title: new RegExp(runId, 'i') }),
+      PushSubscription.deleteMany({ endpoint: new RegExp(runId, 'i') }),
+    ])
     server.close()
   }
 }

@@ -101,5 +101,28 @@ router.patch('/:id', async (req, res) => {
   }
 })
 
+// DELETE /api/tournaments/:id
+router.delete('/:id', async (req, res) => {
+  const session = await requireAdmin(req)
+  if (!session) return unauthorized(res)
+
+  try {
+    await connectDB()
+    const t = await Tournament.findById(req.params.id)
+    if (!t) return sendFail(res, 'Tournament not found', 404)
+
+    const { Match } = await import('../lib/db')
+    const matchCount = await Match.countDocuments({ tournamentId: t._id })
+    if (matchCount > 0) {
+      return sendFail(res, `Cannot delete tournament: ${matchCount} match(es) are associated with it. Delete or reassign matches first.`, 400)
+    }
+
+    await Tournament.findByIdAndDelete(t._id)
+    return sendOk(res, { deleted: true, id: t._id })
+  } catch (err: any) {
+    return sendFail(res, err?.message || 'Failed to delete tournament', 500)
+  }
+})
+
 export default router
 

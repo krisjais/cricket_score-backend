@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const db_1 = require("../lib/db");
@@ -111,6 +144,51 @@ router.patch('/:id', async (req, res) => {
     }
     catch (err) {
         return (0, api_utils_1.sendFail)(res, err?.message || 'Failed to update season', 500);
+    }
+});
+// DELETE /api/seasons/:id - Delete season (cannot delete default season or season with matches)
+router.delete('/:id', async (req, res) => {
+    const session = await (0, auth_1.requireAdmin)(req);
+    if (!session)
+        return (0, api_utils_1.unauthorized)(res);
+    try {
+        await (0, db_1.connectDB)();
+        const season = await db_1.Season.findById(req.params.id);
+        if (!season)
+            return (0, api_utils_1.sendFail)(res, 'Season not found', 404);
+        if (season.isDefault) {
+            return (0, api_utils_1.sendFail)(res, 'Cannot delete the default active season. Designate another season as default first.', 400);
+        }
+        const { Match, Tournament, TeamMembership } = await Promise.resolve().then(() => __importStar(require('../lib/db')));
+        const matchCount = await Match.countDocuments({ seasonId: season._id });
+        if (matchCount > 0) {
+            return (0, api_utils_1.sendFail)(res, `Cannot delete season: ${matchCount} match(es) are associated with it. Delete or reassign matches first.`, 400);
+        }
+        await Promise.all([
+            Tournament.deleteMany({ seasonId: season._id }),
+            TeamMembership.deleteMany({ seasonId: season._id }),
+            db_1.CaptaincyAssignment.deleteMany({ seasonId: season._id }),
+            db_1.CaptaincyAuditLog.deleteMany({ seasonId: season._id }),
+            db_1.Season.findByIdAndDelete(season._id),
+        ]);
+        return (0, api_utils_1.sendOk)(res, { deleted: true, id: season._id });
+    }
+    catch (err) {
+        return (0, api_utils_1.sendFail)(res, err?.message || 'Failed to delete season', 500);
+    }
+});
+// POST /api/seasons/cleanup-test-seasons - Purge all lingering test seasons
+router.post('/cleanup-test-seasons', async (req, res) => {
+    const session = await (0, auth_1.requireAdmin)(req);
+    if (!session)
+        return (0, api_utils_1.unauthorized)(res);
+    try {
+        const { cleanupTestSeasons } = await Promise.resolve().then(() => __importStar(require('../lib/season-cleanup')));
+        const purgedCount = await cleanupTestSeasons();
+        return (0, api_utils_1.sendOk)(res, { purgedCount });
+    }
+    catch (err) {
+        return (0, api_utils_1.sendFail)(res, err?.message || 'Failed to clean test seasons', 500);
     }
 });
 exports.default = router;
