@@ -436,12 +436,24 @@ export const db = {
     },
     delete: async (args: { where: any }) => {
       await connectDB()
-      const doc = await Player.findOneAndDelete(whereToMongo(args.where))
+      const mongoWhere = whereToMongo(args.where)
+      const playerId = mongoWhere?._id || mongoWhere?.id
+      if (typeof playerId === 'string') {
+        const { deletePlayerAndAssociatedData } = await import('./player-cleanup')
+        await deletePlayerAndAssociatedData(playerId)
+        return { id: playerId }
+      }
+      const doc = await Player.findOneAndDelete(mongoWhere)
       return toObj(doc)
     },
     deleteMany: async (args?: { where?: any }) => {
       await connectDB()
-      const res = await Player.deleteMany(whereToMongo(args?.where))
+      if (!args?.where || Object.keys(args.where).length === 0) {
+        const { deleteAllPlayersAndAssociatedData } = await import('./player-cleanup')
+        const res = await deleteAllPlayersAndAssociatedData()
+        return { count: res.deletedPlayersCount }
+      }
+      const res = await Player.deleteMany(whereToMongo(args.where))
       return { count: res.deletedCount }
     },
   },

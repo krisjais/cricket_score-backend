@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.SESSION_DAYS = exports.ADMIN_COOKIE = void 0;
 exports.secretKey = secretKey;
 exports.extractTokenFromRequest = extractTokenFromRequest;
+exports.isSecureRequest = isSecureRequest;
 exports.clearAdminSessionCookie = clearAdminSessionCookie;
 exports.createSessionToken = createSessionToken;
 exports.getSession = getSession;
@@ -71,11 +72,18 @@ function extractTokenFromRequest(req, cookieName) {
     }
     return token;
 }
-function clearAdminSessionCookie(res) {
+function isSecureRequest(req) {
+    if (!req)
+        return process.env.NODE_ENV === 'production';
+    const forwardedProto = req.headers['x-forwarded-proto'];
+    const proto = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto;
+    return Boolean(req.secure || proto?.split(',')[0]?.trim() === 'https');
+}
+function clearAdminSessionCookie(res, req) {
     res.clearCookie(exports.ADMIN_COOKIE, {
         httpOnly: true,
         sameSite: 'lax',
-        secure: process.env.NODE_ENV === 'production',
+        secure: isSecureRequest(req),
         path: '/',
     });
 }

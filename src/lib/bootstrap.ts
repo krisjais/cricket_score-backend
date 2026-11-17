@@ -149,6 +149,10 @@ export async function ensurePlayerSystemBootstrap(): Promise<void> {
         { $or: [{ scorecardStatus: null }, { scorecardStatus: { $exists: false } }] },
         { $set: { scorecardStatus: 'DRAFT' } }
       )
+
+      // 4. Clean up any orphaned player user accounts whose profiles were deleted
+      const { cleanupOrphanedPlayerAccounts } = await import('./player-cleanup')
+      await cleanupOrphanedPlayerAccounts()
     } catch (err) {
       bootstrapPromise = null
       console.error('> Bootstrap migration error:', err)

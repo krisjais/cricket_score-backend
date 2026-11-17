@@ -507,8 +507,9 @@ async function handleDeleteAllPlayers(req: any, res: any) {
     }
   }
 
-  const result = await db.player.deleteMany({})
-  return sendOk(res, { deletedCount: result.count })
+  const { deleteAllPlayersAndAssociatedData } = await import('../lib/player-cleanup')
+  const result = await deleteAllPlayersAndAssociatedData()
+  return sendOk(res, { deletedCount: result.deletedPlayersCount, deletedUsersCount: result.deletedUsersCount })
 }
 
 // DELETE /api/players/all - Delete all players
@@ -533,8 +534,18 @@ router.delete('/:id', async (req, res) => {
     )
   }
 
-  await db.player.delete({ where: { id } })
-  return sendOk(res, { deleted: true })
+  const { deletePlayerAndAssociatedData } = await import('../lib/player-cleanup')
+  const result = await deletePlayerAndAssociatedData(id)
+  return sendOk(res, { deleted: result.deleted, userDeleted: result.userDeleted })
+})
+
+// POST /api/players/cleanup-orphaned-users - Clean up orphaned player user accounts
+router.post('/cleanup-orphaned-users', async (req, res) => {
+  const session = await requireAdmin(req)
+  if (!session) return unauthorized(res)
+  const { cleanupOrphanedPlayerAccounts } = await import('../lib/player-cleanup')
+  const cleanedCount = await cleanupOrphanedPlayerAccounts()
+  return sendOk(res, { cleanedCount })
 })
 
 // Helper to parse CSV string into objects

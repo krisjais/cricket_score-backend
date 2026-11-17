@@ -7,18 +7,11 @@ const db_1 = require("../lib/db");
 const api_utils_1 = require("../lib/api-utils");
 const router = (0, express_1.Router)();
 async function issueAdminLoginSession(req, res, admin) {
-    // Enforce single active role per browser: revoke & clear any player session when signing in as Admin
-    const rawRefresh = req.cookies?.[player_auth_1.PLAYER_REFRESH_COOKIE];
-    if (rawRefresh) {
-        await (0, db_1.connectDB)();
-        await db_1.RefreshToken.updateOne({ tokenHash: (0, player_auth_1.sha256)(rawRefresh) }, { $set: { revokedAt: new Date() } }).catch(() => undefined);
-    }
-    (0, player_auth_1.clearPlayerAuthCookies)(res);
     const token = await (0, auth_1.createSessionToken)(admin.id, admin.username);
     res.cookie(auth_1.ADMIN_COOKIE, token, {
         httpOnly: true,
         sameSite: 'lax',
-        secure: process.env.NODE_ENV === 'production',
+        secure: (0, auth_1.isSecureRequest)(req),
         path: '/',
         maxAge: auth_1.SESSION_DAYS * 24 * 60 * 60 * 1000,
     });
@@ -77,14 +70,14 @@ router.post('/unified-login', async (req, res) => {
         return (0, api_utils_1.sendFail)(res, err?.message || 'Login failed', 500);
     }
 });
-router.post('/logout', (_req, res) => {
-    (0, auth_1.clearAdminSessionCookie)(res);
+router.post('/logout', (req, res) => {
+    (0, auth_1.clearAdminSessionCookie)(res, req);
     return (0, api_utils_1.sendOk)(res, { loggedOut: true });
 });
 router.get('/me', async (req, res) => {
     const session = await (0, auth_1.getSession)(req);
     if (!session && req.cookies?.[auth_1.ADMIN_COOKIE]) {
-        (0, auth_1.clearAdminSessionCookie)(res);
+        (0, auth_1.clearAdminSessionCookie)(res, req);
     }
     return (0, api_utils_1.sendOk)(res, { isAdmin: !!session, username: session?.username ?? null });
 });

@@ -42,6 +42,7 @@ const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
 const socket_1 = require("./socket");
+const notification_service_1 = require("./lib/notification-service");
 const db_1 = require("./lib/db");
 const auth_1 = require("./lib/auth");
 const bootstrap_1 = require("./lib/bootstrap");
@@ -58,6 +59,8 @@ const seasons_1 = __importDefault(require("./routes/seasons"));
 const tournaments_1 = __importDefault(require("./routes/tournaments"));
 const memberships_1 = __importDefault(require("./routes/memberships"));
 const leaderboards_1 = __importDefault(require("./routes/leaderboards"));
+const captains_1 = __importDefault(require("./routes/captains"));
+const notifications_1 = __importDefault(require("./routes/notifications"));
 const app = (0, express_1.default)();
 app.set('trust proxy', 1);
 const server = http_1.default.createServer(app);
@@ -87,6 +90,8 @@ app.use('/api/seasons', seasons_1.default);
 app.use('/api/tournaments', tournaments_1.default);
 app.use('/api/memberships', memberships_1.default);
 app.use('/api/leaderboards', leaderboards_1.default);
+app.use('/api/captains', captains_1.default);
+app.use('/api/notifications', notifications_1.default);
 // Fallback 404
 app.use('/api/*', (_req, res) => {
     res.status(404).json({ ok: false, error: 'Endpoint not found' });
@@ -98,6 +103,7 @@ async function start() {
         await (0, db_1.connectDB)();
         await (0, auth_1.ensureDefaultAdmin)();
         await (0, bootstrap_1.ensurePlayerSystemBootstrap)();
+        void (0, notification_service_1.recoverPendingDeliveryJobs)();
     }
     catch (err) {
         console.warn('> Warning: MongoDB connection failed on start. Queries will retry on demand.');

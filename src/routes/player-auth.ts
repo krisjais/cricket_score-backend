@@ -50,6 +50,7 @@ import {
   verifyOtpProofToken,
 } from '../lib/player-auth'
 import { rebuildCareerStatsForPlayers, writeAuditLog } from '../lib/stats-service'
+import { purgeIfOrphanedPlayerUser } from '../lib/player-cleanup'
 import type { OtpChannel, OtpPurpose } from '../models'
 
 const router = Router()
@@ -146,12 +147,26 @@ router.post('/otp/send', async (req, res) => {
       const emailToCheck = channel === 'EMAIL' ? normalized : extraEmail
       const mobileToCheck = channel === 'MOBILE' ? normalized : extraMobile
 
-      const [dupEmail, dupMobile] = await Promise.all([
-        emailToCheck ? User.findOne({ email: emailToCheck }).select({ _id: 1 }).lean() : null,
-        mobileToCheck ? User.findOne({ mobile: mobileToCheck }).select({ _id: 1 }).lean() : null,
+      const [dupEmailDoc, dupMobileDoc] = await Promise.all([
+        emailToCheck
+          ? User.findOne({ email: emailToCheck }).select({ _id: 1, email: 1, mobile: 1, playerId: 1, role: 1 }).lean()
+          : null,
+        mobileToCheck
+          ? User.findOne({ mobile: mobileToCheck }).select({ _id: 1, email: 1, mobile: 1, playerId: 1, role: 1 }).lean()
+          : null,
       ])
-      if (dupEmail) return sendFail(res, 'An account with this email is already registered', 409)
-      if (dupMobile) return sendFail(res, 'An account with this mobile number is already registered', 409)
+
+      let isDupEmail = Boolean(dupEmailDoc)
+      if (dupEmailDoc && (await purgeIfOrphanedPlayerUser(dupEmailDoc))) {
+        isDupEmail = false
+      }
+      let isDupMobile = Boolean(dupMobileDoc)
+      if (dupMobileDoc && (await purgeIfOrphanedPlayerUser(dupMobileDoc))) {
+        isDupMobile = false
+      }
+
+      if (isDupEmail) return sendFail(res, 'An account with this email is already registered', 409)
+      if (isDupMobile) return sendFail(res, 'An account with this mobile number is already registered', 409)
     }
 
     const result = await createOtpChallenge({
@@ -298,13 +313,23 @@ router.post('/register', async (req, res) => {
     const pwdErr = validatePasswordStrength(password)
     if (pwdErr) return sendFail(res, pwdErr)
 
-    // Duplicate account prevention
-    const [dupEmail, dupMobile] = await Promise.all([
-      User.findOne({ email }).select({ _id: 1 }).lean(),
-      User.findOne({ mobile }).select({ _id: 1 }).lean(),
+    // Duplicate account prevention (auto-purging orphaned users whose players were deleted)
+    const [dupEmailDoc, dupMobileDoc] = await Promise.all([
+      User.findOne({ email }).select({ _id: 1, email: 1, mobile: 1, playerId: 1, role: 1 }).lean(),
+      User.findOne({ mobile }).select({ _id: 1, email: 1, mobile: 1, playerId: 1, role: 1 }).lean(),
     ])
-    if (dupEmail) return sendFail(res, 'An account with this email is already registered', 409)
-    if (dupMobile) return sendFail(res, 'An account with this mobile number is already registered', 409)
+
+    let isDupEmail = Boolean(dupEmailDoc)
+    if (dupEmailDoc && (await purgeIfOrphanedPlayerUser(dupEmailDoc))) {
+      isDupEmail = false
+    }
+    let isDupMobile = Boolean(dupMobileDoc)
+    if (dupMobileDoc && (await purgeIfOrphanedPlayerUser(dupMobileDoc))) {
+      isDupMobile = false
+    }
+
+    if (isDupEmail) return sendFail(res, 'An account with this email is already registered', 409)
+    if (isDupMobile) return sendFail(res, 'An account with this mobile number is already registered', 409)
 
     // OTP verification via either otpProofToken or direct otpCode + otpChannel
     let verifiedChannel: OtpChannel | null = null

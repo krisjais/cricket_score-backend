@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ensureDefaultSeasonAndTournament = ensureDefaultSeasonAndTournament;
 exports.ensureActiveMembershipForPlayer = ensureActiveMembershipForPlayer;
@@ -36,8 +69,8 @@ async function ensureDefaultSeasonAndTournament() {
     let tournament = await db_1.Tournament.findOne({ seasonId: season._id }).sort({ createdAt: 1 }).lean();
     if (!tournament) {
         const createdT = await db_1.Tournament.create({
-            name: `Nexcore Premier League ${season.year}`,
-            shortName: `NPL-${String(season.year).slice(-2)}`,
+            name: `Alliance Premier League ${season.year}`,
+            shortName: `APL-${String(season.year).slice(-2)}`,
             seasonId: season._id,
             format: 'T20',
             status: 'ACTIVE',
@@ -120,6 +153,9 @@ async function ensurePlayerSystemBootstrap() {
             // 3. Backfill seasonId / tournamentId / matchDate on matches where missing
             await db_1.Match.updateMany({ $or: [{ seasonId: null }, { seasonId: { $exists: false } }] }, { $set: { seasonId: season._id, tournamentId: tournament._id } });
             await db_1.Match.updateMany({ $or: [{ scorecardStatus: null }, { scorecardStatus: { $exists: false } }] }, { $set: { scorecardStatus: 'DRAFT' } });
+            // 4. Clean up any orphaned player user accounts whose profiles were deleted
+            const { cleanupOrphanedPlayerAccounts } = await Promise.resolve().then(() => __importStar(require('./player-cleanup')));
+            await cleanupOrphanedPlayerAccounts();
         }
         catch (err) {
             bootstrapPromise = null;

@@ -31,6 +31,16 @@ function initSocketServer(httpServer) {
         socket.on('unsubscribe:matches', () => {
             void socket.leave('matches');
         });
+        socket.on('subscribe:player', (playerId) => {
+            if (typeof playerId !== 'string' || !playerId)
+                return;
+            void socket.join(`player:${playerId}`);
+        });
+        socket.on('unsubscribe:player', (playerId) => {
+            if (typeof playerId !== 'string' || !playerId)
+                return;
+            void socket.leave(`player:${playerId}`);
+        });
         socket.on('error', (error) => {
             console.error(`Socket error (${socket.id}):`, error);
         });

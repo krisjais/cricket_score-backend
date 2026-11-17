@@ -1,11 +1,45 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.db = exports.StatisticsAuditLog = exports.PlayerProfileClaim = exports.Award = exports.PlayerCareerStat = exports.PlayerMatchStat = exports.TeamMembership = exports.Tournament = exports.Season = exports.Counter = exports.RefreshToken = exports.OtpVerification = exports.User = exports.Ball = exports.Innings = exports.Match = exports.Player = exports.Team = exports.Admin = void 0;
+exports.db = exports.PushSubscription = exports.NotificationDeliveryJob = exports.NotificationPreferences = exports.InAppNotification = exports.PlayerAvailability = exports.PlayingXISubmission = exports.TeamAnnouncement = exports.CaptaincyAuditLog = exports.CaptaincyAssignment = exports.StatisticsAuditLog = exports.PlayerProfileClaim = exports.Award = exports.PlayerCareerStat = exports.PlayerMatchStat = exports.TeamMembership = exports.Tournament = exports.Season = exports.Counter = exports.RefreshToken = exports.OtpVerification = exports.User = exports.Ball = exports.Innings = exports.Match = exports.Player = exports.Team = exports.Admin = void 0;
 exports.withMongoTransaction = withMongoTransaction;
 exports.connectDB = connectDB;
+const node_dns_1 = __importDefault(require("node:dns"));
 const mongoose_1 = __importDefault(require("mongoose"));
 const models_1 = require("../models");
 Object.defineProperty(exports, "Admin", { enumerable: true, get: function () { return models_1.Admin; } });
@@ -26,6 +60,15 @@ Object.defineProperty(exports, "PlayerCareerStat", { enumerable: true, get: func
 Object.defineProperty(exports, "Award", { enumerable: true, get: function () { return models_1.Award; } });
 Object.defineProperty(exports, "PlayerProfileClaim", { enumerable: true, get: function () { return models_1.PlayerProfileClaim; } });
 Object.defineProperty(exports, "StatisticsAuditLog", { enumerable: true, get: function () { return models_1.StatisticsAuditLog; } });
+Object.defineProperty(exports, "CaptaincyAssignment", { enumerable: true, get: function () { return models_1.CaptaincyAssignment; } });
+Object.defineProperty(exports, "CaptaincyAuditLog", { enumerable: true, get: function () { return models_1.CaptaincyAuditLog; } });
+Object.defineProperty(exports, "TeamAnnouncement", { enumerable: true, get: function () { return models_1.TeamAnnouncement; } });
+Object.defineProperty(exports, "PlayingXISubmission", { enumerable: true, get: function () { return models_1.PlayingXISubmission; } });
+Object.defineProperty(exports, "PlayerAvailability", { enumerable: true, get: function () { return models_1.PlayerAvailability; } });
+Object.defineProperty(exports, "InAppNotification", { enumerable: true, get: function () { return models_1.InAppNotification; } });
+Object.defineProperty(exports, "NotificationPreferences", { enumerable: true, get: function () { return models_1.NotificationPreferences; } });
+Object.defineProperty(exports, "NotificationDeliveryJob", { enumerable: true, get: function () { return models_1.NotificationDeliveryJob; } });
+Object.defineProperty(exports, "PushSubscription", { enumerable: true, get: function () { return models_1.PushSubscription; } });
 /**
  * Execute work inside a MongoDB multi-document transaction when supported (replica sets / Atlas),
  * falling back cleanly to direct execution if running against a standalone local mongod instance.
@@ -65,9 +108,53 @@ function isTransientMongoError(error) {
         return false;
     if (err.syscall === 'querySrv' || err.code === 'ETIMEOUT' || err.code === 'EAI_AGAIN')
         return true;
-    if (err.code === 'ESERVFAIL' || err.code === 'ECONNRESET')
+    if (err.code === 'ESERVFAIL' || err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED')
         return true;
     return err.name === 'MongoServerSelectionError';
+}
+/**
+ * Resolve a mongodb+srv:// URI via DNS-over-HTTPS when local/UDP SRV DNS is blocked or refused.
+ */
+async function resolveSrvUriViaDoH(srvUri) {
+    try {
+        const parsed = new URL(srvUri);
+        const host = parsed.hostname;
+        const [srvRes, txtRes] = await Promise.all([
+            fetch(`https://dns.google/resolve?name=${encodeURIComponent(`_mongodb._tcp.${host}`)}&type=SRV`),
+            fetch(`https://dns.google/resolve?name=${encodeURIComponent(host)}&type=TXT`),
+        ]);
+        if (!srvRes.ok)
+            return null;
+        const srvJson = (await srvRes.json());
+        const hosts = (srvJson.Answer ?? [])
+            .map((a) => String(a.data || '').trim().split(/\s+/))
+            .filter((parts) => parts.length >= 4)
+            .map((parts) => `${parts[3].replace(/\.$/, '')}:${parts[2]}`);
+        if (hosts.length === 0)
+            return null;
+        const params = new URLSearchParams();
+        params.set('tls', 'true');
+        if (txtRes.ok) {
+            const txtJson = (await txtRes.json());
+            const rawTxt = (txtJson.Answer ?? [])
+                .map((a) => String(a.data || '').replace(/^"|"$/g, '').replace(/"\s*"/g, ''))
+                .join('');
+            for (const [k, v] of new URLSearchParams(rawTxt).entries()) {
+                params.set(k, v);
+            }
+        }
+        for (const [k, v] of parsed.searchParams.entries()) {
+            params.set(k, v);
+        }
+        const auth = parsed.username
+            ? `${parsed.username}${parsed.password ? `:${parsed.password}` : ''}@`
+            : '';
+        const pathname = parsed.pathname && parsed.pathname !== '/' ? parsed.pathname : '/';
+        return `mongodb://${auth}${hosts.join(',')}${pathname}?${params.toString()}`;
+    }
+    catch {
+        return null;
+    }
 }
 /**
  * Connect to MongoDB with in-flight deduplication and brief transient DNS/network retry.
@@ -79,13 +166,16 @@ async function connectDB() {
     if (inFlightConnect) {
         return inFlightConnect;
     }
-    const maxAttempts = 3;
+    const maxAttempts = 4;
     const uri = getMongoUri();
     inFlightConnect = (async () => {
         let lastError;
+        let connectUri = uri;
+        let switchedDns = false;
+        let triedDoH = false;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-                const conn = await mongoose_1.default.connect(uri, {
+                const conn = await mongoose_1.default.connect(connectUri, {
                     serverSelectionTimeoutMS: 10000,
                     connectTimeoutMS: 10000,
                 });
@@ -94,6 +184,27 @@ async function connectDB() {
             }
             catch (error) {
                 lastError = error;
+                const errInfo = error;
+                if (errInfo?.syscall === 'querySrv' && connectUri.startsWith('mongodb+srv://')) {
+                    if (!switchedDns) {
+                        switchedDns = true;
+                        try {
+                            node_dns_1.default.setServers(['1.1.1.1', '8.8.8.8']);
+                            continue;
+                        }
+                        catch {
+                            // ignore and try DoH below
+                        }
+                    }
+                    if (!triedDoH) {
+                        triedDoH = true;
+                        const standardUri = await resolveSrvUriViaDoH(connectUri);
+                        if (standardUri) {
+                            connectUri = standardUri;
+                            continue;
+                        }
+                    }
+                }
                 if (attempt < maxAttempts && isTransientMongoError(error)) {
                     await new Promise((resolve) => setTimeout(resolve, attempt * 600));
                     continue;
@@ -103,7 +214,7 @@ async function connectDB() {
         }
         const errObj = lastError;
         if (errObj?.syscall === 'querySrv' || errObj?.code === 'ETIMEOUT') {
-            console.error('> MongoDB Connection Error: DNS SRV lookup timed out (querySrv ETIMEOUT). If your network/router blocks SRV DNS, switch system DNS to 1.1.1.1 / 8.8.8.8 or use the standard mongodb:// (non-SRV) URI from MongoDB Atlas.', lastError);
+            console.error(`> MongoDB Connection Error: DNS SRV lookup failed (${errObj?.syscall || ''} ${errObj?.code || 'TIMEOUT'}). Tried fallback DNS (1.1.1.1/8.8.8.8) and DoH. Check network/DNS or set a standard mongodb:// URI in MONGODB_URI.`, lastError);
         }
         else {
             console.error('> MongoDB Connection Error:', lastError);
@@ -324,12 +435,24 @@ exports.db = {
         },
         delete: async (args) => {
             await connectDB();
-            const doc = await models_1.Player.findOneAndDelete(whereToMongo(args.where));
+            const mongoWhere = whereToMongo(args.where);
+            const playerId = mongoWhere?._id || mongoWhere?.id;
+            if (typeof playerId === 'string') {
+                const { deletePlayerAndAssociatedData } = await Promise.resolve().then(() => __importStar(require('./player-cleanup')));
+                await deletePlayerAndAssociatedData(playerId);
+                return { id: playerId };
+            }
+            const doc = await models_1.Player.findOneAndDelete(mongoWhere);
             return toObj(doc);
         },
         deleteMany: async (args) => {
             await connectDB();
-            const res = await models_1.Player.deleteMany(whereToMongo(args?.where));
+            if (!args?.where || Object.keys(args.where).length === 0) {
+                const { deleteAllPlayersAndAssociatedData } = await Promise.resolve().then(() => __importStar(require('./player-cleanup')));
+                const res = await deleteAllPlayersAndAssociatedData();
+                return { count: res.deletedPlayersCount };
+            }
+            const res = await models_1.Player.deleteMany(whereToMongo(args.where));
             return { count: res.deletedCount };
         },
     },

@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const db_1 = require("../lib/db");
@@ -6,6 +39,7 @@ const auth_1 = require("../lib/auth");
 const api_utils_1 = require("../lib/api-utils");
 const bootstrap_1 = require("../lib/bootstrap");
 const stats_service_1 = require("../lib/stats-service");
+const captaincy_service_1 = require("../lib/captaincy-service");
 const router = (0, express_1.Router)();
 function parseGender(input) {
     const s = (input ?? '').trim().toLowerCase();
@@ -176,6 +210,11 @@ router.get('/public/:playerCodeOrId', async (req, res) => {
             bio: player.bio ?? null,
             privacy: publicPrivacy,
         };
+        const [activeCaptaincy, captaincyHistory, captainBadges] = await Promise.all([
+            (0, captaincy_service_1.getActiveCaptaincy)(player._id),
+            (0, captaincy_service_1.getPlayerCaptaincyHistory)(player._id),
+            (0, captaincy_service_1.computeCaptainBadges)(player._id),
+        ]);
         return (0, api_utils_1.sendOk)(res, {
             isPrivate: false,
             player: publicPlayer,
@@ -184,6 +223,9 @@ router.get('/public/:playerCodeOrId', async (req, res) => {
             career,
             recentMatches,
             awards,
+            activeCaptaincy: activeCaptaincy.isCaptain ? activeCaptaincy : null,
+            captaincyHistory,
+            captainBadges,
         });
     }
     catch (err) {
@@ -252,12 +294,14 @@ router.get('/:id/career', async (req, res) => {
             await (0, stats_service_1.rebuildCareerStatsForPlayers)([player._id]);
             career = await db_1.PlayerCareerStat.findOne({ playerId: player._id }).lean();
         }
-        const [memberships, matchStats, teams, seasons, tournaments] = await Promise.all([
+        const [memberships, matchStats, teams, seasons, tournaments, captaincyHistory, captainBadges] = await Promise.all([
             db_1.TeamMembership.find({ playerId: player._id }).sort({ joinedAt: -1 }).lean(),
             db_1.PlayerMatchStat.find({ playerId: player._id }).sort({ matchDate: -1 }).lean(),
             db_1.Team.find({}).lean(),
             db_1.Season.find({}).lean(),
             db_1.Tournament.find({}).lean(),
+            (0, captaincy_service_1.getPlayerCaptaincyHistory)(player._id),
+            (0, captaincy_service_1.computeCaptainBadges)(player._id),
         ]);
         const tMap = new Map(teams.map((t) => [t._id, t]));
         const sMap = new Map(seasons.map((s) => [s._id, s]));
@@ -265,6 +309,8 @@ router.get('/:id/career', async (req, res) => {
         return (0, api_utils_1.sendOk)(res, {
             player: { ...player, id: player._id },
             career,
+            captaincyHistory,
+            captainBadges,
             memberships: memberships.map((m) => ({
                 ...m,
                 id: m._id,
@@ -428,8 +474,9 @@ async function handleDeleteAllPlayers(req, res) {
             return (0, api_utils_1.sendFail)(res, `Cannot delete players: ${ballsCount} delivery events are currently recorded in matches. Reset match history first or confirm force deletion.`);
         }
     }
-    const result = await db_1.db.player.deleteMany({});
-    return (0, api_utils_1.sendOk)(res, { deletedCount: result.count });
+    const { deleteAllPlayersAndAssociatedData } = await Promise.resolve().then(() => __importStar(require('../lib/player-cleanup')));
+    const result = await deleteAllPlayersAndAssociatedData();
+    return (0, api_utils_1.sendOk)(res, { deletedCount: result.deletedPlayersCount, deletedUsersCount: result.deletedUsersCount });
 }
 // DELETE /api/players/all - Delete all players
 router.delete('/all', handleDeleteAllPlayers);
@@ -447,8 +494,18 @@ router.delete('/:id', async (req, res) => {
     if (used > 0) {
         return (0, api_utils_1.sendFail)(res, `Cannot delete: this player has recorded deliveries in ${used} ball event(s). Remove the match history first.`);
     }
-    await db_1.db.player.delete({ where: { id } });
-    return (0, api_utils_1.sendOk)(res, { deleted: true });
+    const { deletePlayerAndAssociatedData } = await Promise.resolve().then(() => __importStar(require('../lib/player-cleanup')));
+    const result = await deletePlayerAndAssociatedData(id);
+    return (0, api_utils_1.sendOk)(res, { deleted: result.deleted, userDeleted: result.userDeleted });
+});
+// POST /api/players/cleanup-orphaned-users - Clean up orphaned player user accounts
+router.post('/cleanup-orphaned-users', async (req, res) => {
+    const session = await (0, auth_1.requireAdmin)(req);
+    if (!session)
+        return (0, api_utils_1.unauthorized)(res);
+    const { cleanupOrphanedPlayerAccounts } = await Promise.resolve().then(() => __importStar(require('../lib/player-cleanup')));
+    const cleanedCount = await cleanupOrphanedPlayerAccounts();
+    return (0, api_utils_1.sendOk)(res, { cleanedCount });
 });
 // Helper to parse CSV string into objects
 function parseCSV(text) {

@@ -5,8 +5,10 @@ const db_1 = require("../lib/db");
 const api_utils_1 = require("../lib/api-utils");
 const bootstrap_1 = require("../lib/bootstrap");
 const player_dashboard_analytics_1 = require("../lib/player-dashboard-analytics");
+const captaincy_service_1 = require("../lib/captaincy-service");
 const player_auth_1 = require("../lib/player-auth");
 const stats_service_1 = require("../lib/stats-service");
+const player_cleanup_1 = require("../lib/player-cleanup");
 const router = (0, express_1.Router)();
 const ALLOWED_OTP_PURPOSES = [
     'REGISTER',
@@ -73,14 +75,36 @@ router.post('/otp/send', async (req, res) => {
             return (0, api_utils_1.sendFail)(res, 'Please enter a valid 8-15 digit mobile number');
         }
         if (purpose === 'REGISTER') {
-            const existing = channel === 'EMAIL'
-                ? await db_1.User.findOne({ email: normalized }).select({ _id: 1 }).lean()
-                : await db_1.User.findOne({ mobile: normalized }).select({ _id: 1 }).lean();
-            if (existing) {
-                return (0, api_utils_1.sendFail)(res, channel === 'EMAIL'
-                    ? 'An account with this email already exists'
-                    : 'An account with this mobile number already exists', 409);
+            const extraEmail = channel !== 'EMAIL' && typeof body.email === 'string' ? (0, player_auth_1.normalizeEmail)(body.email) : null;
+            const extraMobile = channel !== 'MOBILE' && typeof body.mobile === 'string' ? (0, player_auth_1.normalizeMobile)(body.mobile) : null;
+            if (extraMobile && !(0, player_auth_1.isValidMobile)(extraMobile)) {
+                return (0, api_utils_1.sendFail)(res, 'Valid mobile number (8-15 digits) is required');
             }
+            if (extraEmail && !(0, player_auth_1.isValidEmail)(extraEmail)) {
+                return (0, api_utils_1.sendFail)(res, 'Please enter a valid email address');
+            }
+            const emailToCheck = channel === 'EMAIL' ? normalized : extraEmail;
+            const mobileToCheck = channel === 'MOBILE' ? normalized : extraMobile;
+            const [dupEmailDoc, dupMobileDoc] = await Promise.all([
+                emailToCheck
+                    ? db_1.User.findOne({ email: emailToCheck }).select({ _id: 1, email: 1, mobile: 1, playerId: 1, role: 1 }).lean()
+                    : null,
+                mobileToCheck
+                    ? db_1.User.findOne({ mobile: mobileToCheck }).select({ _id: 1, email: 1, mobile: 1, playerId: 1, role: 1 }).lean()
+                    : null,
+            ]);
+            let isDupEmail = Boolean(dupEmailDoc);
+            if (dupEmailDoc && (await (0, player_cleanup_1.purgeIfOrphanedPlayerUser)(dupEmailDoc))) {
+                isDupEmail = false;
+            }
+            let isDupMobile = Boolean(dupMobileDoc);
+            if (dupMobileDoc && (await (0, player_cleanup_1.purgeIfOrphanedPlayerUser)(dupMobileDoc))) {
+                isDupMobile = false;
+            }
+            if (isDupEmail)
+                return (0, api_utils_1.sendFail)(res, 'An account with this email is already registered', 409);
+            if (isDupMobile)
+                return (0, api_utils_1.sendFail)(res, 'An account with this mobile number is already registered', 409);
         }
         const result = await (0, player_auth_1.createOtpChallenge)({
             channel,
@@ -214,14 +238,22 @@ router.post('/register', async (req, res) => {
         const pwdErr = (0, player_auth_1.validatePasswordStrength)(password);
         if (pwdErr)
             return (0, api_utils_1.sendFail)(res, pwdErr);
-        // Duplicate account prevention
-        const [dupEmail, dupMobile] = await Promise.all([
-            db_1.User.findOne({ email }).select({ _id: 1 }).lean(),
-            db_1.User.findOne({ mobile }).select({ _id: 1 }).lean(),
+        // Duplicate account prevention (auto-purging orphaned users whose players were deleted)
+        const [dupEmailDoc, dupMobileDoc] = await Promise.all([
+            db_1.User.findOne({ email }).select({ _id: 1, email: 1, mobile: 1, playerId: 1, role: 1 }).lean(),
+            db_1.User.findOne({ mobile }).select({ _id: 1, email: 1, mobile: 1, playerId: 1, role: 1 }).lean(),
         ]);
-        if (dupEmail)
+        let isDupEmail = Boolean(dupEmailDoc);
+        if (dupEmailDoc && (await (0, player_cleanup_1.purgeIfOrphanedPlayerUser)(dupEmailDoc))) {
+            isDupEmail = false;
+        }
+        let isDupMobile = Boolean(dupMobileDoc);
+        if (dupMobileDoc && (await (0, player_cleanup_1.purgeIfOrphanedPlayerUser)(dupMobileDoc))) {
+            isDupMobile = false;
+        }
+        if (isDupEmail)
             return (0, api_utils_1.sendFail)(res, 'An account with this email is already registered', 409);
-        if (dupMobile)
+        if (isDupMobile)
             return (0, api_utils_1.sendFail)(res, 'An account with this mobile number is already registered', 409);
         // OTP verification via either otpProofToken or direct otpCode + otpChannel
         let verifiedChannel = null;
@@ -364,7 +396,12 @@ router.post('/refresh', async (req, res) => {
         await (0, db_1.connectDB)();
         const rawRefresh = req.cookies?.[player_auth_1.PLAYER_REFRESH_COOKIE];
         if (!rawRefresh) {
-            return (0, api_utils_1.sendFail)(res, 'Refresh token missing', 401);
+            return (0, api_utils_1.sendOk)(res, {
+                refreshed: false,
+                isAuthenticated: false,
+                user: null,
+                player: null,
+            });
         }
         const tokenDoc = await db_1.RefreshToken.findOne({
             tokenHash: (0, player_auth_1.sha256)(rawRefresh),
@@ -439,11 +476,13 @@ router.get('/me', async (req, res) => {
                 season: season ? { id: season._id, name: season.name, year: season.year, status: season.status } : null,
             };
         }
+        const activeCaptaincy = await (0, captaincy_service_1.getActiveCaptaincy)(player._id);
         return (0, api_utils_1.sendOk)(res, {
             isAuthenticated: true,
             user: (0, player_auth_1.sanitizePlayerUser)(user),
             player: { ...player, id: player._id },
             currentMembership,
+            activeCaptaincy: activeCaptaincy.isCaptain ? activeCaptaincy : null,
         });
     }
     catch (err) {
@@ -647,6 +686,22 @@ router.get('/dashboard', async (req, res) => {
             teamMap,
             activeMatches,
         });
+        const [activeCaptaincy, captaincyHistory, captainBadges] = await Promise.all([
+            (0, captaincy_service_1.getActiveCaptaincy)(player._id),
+            (0, captaincy_service_1.getPlayerCaptaincyHistory)(player._id),
+            (0, captaincy_service_1.computeCaptainBadges)(player._id),
+        ]);
+        const mergedAchievements = [
+            ...captainBadges.map((cb) => ({
+                id: cb.id,
+                key: cb.key,
+                title: cb.title,
+                subtitle: cb.subtitle,
+                category: 'CAREER',
+                achievedAt: cb.achievedAt,
+            })),
+            ...achievements,
+        ];
         return (0, api_utils_1.sendOk)(res, {
             user: (0, player_auth_1.sanitizePlayerUser)(user),
             player: { ...player, id: player._id },
@@ -657,10 +712,12 @@ router.get('/dashboard', async (req, res) => {
             performanceSeries,
             seasonPerformance,
             personalBests,
-            achievements,
+            achievements: mergedAchievements,
             upcomingMatches,
             awards,
             claims: pendingClaims,
+            activeCaptaincy: activeCaptaincy.isCaptain ? activeCaptaincy : null,
+            captaincyHistory,
         });
     }
     catch (err) {

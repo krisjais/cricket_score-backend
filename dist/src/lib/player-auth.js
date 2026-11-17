@@ -317,14 +317,12 @@ async function issuePlayerAuthCookies(res, user, player, req) {
         revokedAt: null,
         userAgent: req?.headers['user-agent']?.slice(0, 240) ?? null,
     });
-    const isProd = process.env.NODE_ENV === 'production';
     const cookieOpts = {
         httpOnly: true,
         sameSite: 'lax',
-        secure: isProd,
+        secure: (0, auth_1.isSecureRequest)(req),
         path: '/',
     };
-    (0, auth_1.clearAdminSessionCookie)(res);
     res.cookie(exports.PLAYER_ACCESS_COOKIE, accessToken, {
         ...cookieOpts,
         maxAge: 2 * 60 * 60 * 1000,
@@ -335,9 +333,8 @@ async function issuePlayerAuthCookies(res, user, player, req) {
     });
     return { accessToken };
 }
-function clearPlayerAuthCookies(res) {
-    const isProd = process.env.NODE_ENV === 'production';
-    const opts = { httpOnly: true, sameSite: 'lax', secure: isProd, path: '/' };
+function clearPlayerAuthCookies(res, req) {
+    const opts = { httpOnly: true, sameSite: 'lax', secure: (0, auth_1.isSecureRequest)(req), path: '/' };
     res.clearCookie(exports.PLAYER_ACCESS_COOKIE, opts);
     res.clearCookie(exports.PLAYER_REFRESH_COOKIE, opts);
 }
@@ -389,16 +386,50 @@ function sanitizePlayerUser(u) {
         lastLoginAt: u.lastLoginAt ?? null,
     };
 }
-/** Verify player credentials by email or mobile and resolve their active Player profile. */
+/** Verify player credentials by email, mobile, or player code and resolve their active Player profile. */
 async function authenticatePlayerCredentials(rawIdentifier, password) {
-    const emailCandidate = normalizeEmail(rawIdentifier);
-    const mobileCandidate = normalizeMobile(rawIdentifier);
-    const orClauses = [];
-    if (emailCandidate && emailCandidate.includes('@')) {
-        orClauses.push({ email: emailCandidate });
+    const trimmed = typeof rawIdentifier === 'string' ? rawIdentifier.trim() : '';
+    const trimmedPassword = typeof password === 'string' ? password.trim() : '';
+    if (!trimmed || !trimmedPassword) {
+        return { ok: false, status: 401, error: 'Identifier and password are required' };
     }
-    if (mobileCandidate && isValidMobile(mobileCandidate)) {
-        orClauses.push({ mobile: mobileCandidate });
+    const emailCandidate = normalizeEmail(trimmed);
+    const digits = trimmed.replace(/\D/g, '');
+    const orClauses = [];
+    // 1. Email check (case-insensitive regex)
+    if (emailCandidate && emailCandidate.includes('@')) {
+        const escaped = emailCandidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        orClauses.push({ email: { $regex: new RegExp(`^${escaped}$`, 'i') } });
+    }
+    // 2. Mobile check: match all common formats (+91, without +91, last 10 digits)
+    if (digits.length >= 10) {
+        const last10 = digits.slice(-10);
+        orClauses.push({
+            mobile: {
+                $in: [
+                    last10,
+                    `+91${last10}`,
+                    `91${last10}`,
+                    `+${digits}`,
+                    digits,
+                    trimmed,
+                ],
+            },
+        });
+    }
+    // 3. Player Code check: if identifier matches a registered player's code
+    if (!emailCandidate?.includes('@') && digits.length < 10) {
+        const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const matchingPlayer = await db_1.Player.findOne({
+            playerCode: { $regex: new RegExp(`^${escaped}$`, 'i') },
+            status: { $ne: 'MERGED' },
+        }).lean();
+        if (matchingPlayer) {
+            if (matchingPlayer.userId) {
+                orClauses.push({ _id: matchingPlayer.userId });
+            }
+            orClauses.push({ playerId: matchingPlayer._id });
+        }
     }
     if (orClauses.length === 0) {
         return { ok: false, status: 401, error: 'Invalid credentials' };
@@ -407,7 +438,11 @@ async function authenticatePlayerCredentials(rawIdentifier, password) {
     if (!user || !user.isActive) {
         return { ok: false, status: 401, error: 'Invalid credentials' };
     }
-    const ok = await verifyPassword(password, user.passwordHash);
+    // Try trimmed password first, then raw password as fallback
+    let ok = await verifyPassword(trimmedPassword, user.passwordHash);
+    if (!ok && password !== trimmedPassword) {
+        ok = await verifyPassword(password, user.passwordHash);
+    }
     if (!ok) {
         return { ok: false, status: 401, error: 'Invalid credentials' };
     }

@@ -71,7 +71,32 @@ router.patch('/:id', async (req, res) => {
         if (typeof body.name === 'string' && body.name.trim())
             season.name = body.name.trim();
         if (body.status && ['UPCOMING', 'ACTIVE', 'COMPLETED'].includes(body.status)) {
+            const prevStatus = season.status;
             season.status = body.status;
+            // Requirement 8: When a season is completed, mark active captaincies as completed & preserve history
+            if (body.status === 'COMPLETED' && prevStatus !== 'COMPLETED') {
+                const activeCaptains = await db_1.CaptaincyAssignment.find({
+                    seasonId: season._id,
+                    status: 'active',
+                });
+                const now = new Date();
+                for (const cap of activeCaptains) {
+                    cap.status = 'completed';
+                    cap.endedAt = now;
+                    await cap.save();
+                    await db_1.CaptaincyAuditLog.create({
+                        assignmentId: cap._id,
+                        action: 'AUTO_EXPIRE',
+                        seasonId: season._id,
+                        teamId: cap.teamId,
+                        previousCaptainId: cap.playerId,
+                        newCaptainId: null,
+                        performedBy: session.username,
+                        performedAt: now,
+                        reason: `Season ${season.name} marked COMPLETED`,
+                    });
+                }
+            }
         }
         if (body.startDate !== undefined)
             season.startDate = body.startDate ? new Date(body.startDate) : null;

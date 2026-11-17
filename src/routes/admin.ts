@@ -358,6 +358,10 @@ router.post('/stats/recalculate', async (req, res) => {
         ? req.body.reason.trim()
         : 'Manual recalculation triggered from Admin Panel'
     const result = await recalculateStats(playerId, adminActor(req), reason)
+    if (!playerId) {
+      const { cleanupOrphanedPlayerAccounts } = await import('../lib/player-cleanup')
+      await cleanupOrphanedPlayerAccounts()
+    }
     return sendOk(res, result)
   } catch (err: any) {
     return sendFail(res, err?.message || 'Recalculation failed', 500)
