@@ -1,5 +1,6 @@
 import { Schema, model } from 'mongoose'
 import { randomUUID } from 'crypto'
+import type { IMatchUmpire } from './Match'
 
 export interface IInnings {
   _id: string
@@ -12,7 +13,19 @@ export interface IInnings {
   currentStrikerId: string | null
   currentNonStrikerId: string | null
   currentBowlerId: string | null
+  mainUmpire: IMatchUmpire | null
+  legUmpire: IMatchUmpire | null
 }
+
+const InningsUmpireSchema = new Schema<IMatchUmpire>(
+  {
+    name: { type: String, required: true },
+    teamId: { type: String, default: null, ref: 'Team' },
+    teamName: { type: String, default: null },
+    playerId: { type: String, default: null, ref: 'Player' },
+  },
+  { _id: false }
+)
 
 const InningsSchema = new Schema<IInnings>(
   {
@@ -29,6 +42,8 @@ const InningsSchema = new Schema<IInnings>(
     currentStrikerId: { type: String, default: null },
     currentNonStrikerId: { type: String, default: null },
     currentBowlerId: { type: String, default: null },
+    mainUmpire: { type: InningsUmpireSchema, default: null },
+    legUmpire: { type: InningsUmpireSchema, default: null },
   },
   {
     toJSON: {

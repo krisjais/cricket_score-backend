@@ -9,6 +9,12 @@ const PlayerStatusEntrySchema = new mongoose_1.Schema({
     status: { type: String, enum: ['PLAYED', 'RETIRED_HURT', 'RETIRED_OUT', 'ABSENT'], default: 'PLAYED' },
     notes: { type: String, default: null },
 }, { _id: false });
+const MatchUmpireSchema = new mongoose_1.Schema({
+    name: { type: String, required: true },
+    teamId: { type: String, default: null, ref: 'Team' },
+    teamName: { type: String, default: null },
+    playerId: { type: String, default: null, ref: 'Player' },
+}, { _id: false });
 const MatchSchema = new mongoose_1.Schema({
     _id: { type: String, default: () => (0, crypto_1.randomUUID)() },
     format: {
@@ -19,6 +25,8 @@ const MatchSchema = new mongoose_1.Schema({
     totalOvers: { type: Number, default: 20 },
     maxOversPerBowler: { type: Number, default: null },
     maxBowlersWithMaxOvers: { type: Number, default: null },
+    mainUmpire: { type: MatchUmpireSchema, default: null },
+    legUmpire: { type: MatchUmpireSchema, default: null },
     venue: { type: String, default: null },
     status: {
         type: String,

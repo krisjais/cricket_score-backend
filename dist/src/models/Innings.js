@@ -3,6 +3,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.Innings = void 0;
 const mongoose_1 = require("mongoose");
 const crypto_1 = require("crypto");
+const InningsUmpireSchema = new mongoose_1.Schema({
+    name: { type: String, required: true },
+    teamId: { type: String, default: null, ref: 'Team' },
+    teamName: { type: String, default: null },
+    playerId: { type: String, default: null, ref: 'Player' },
+}, { _id: false });
 const InningsSchema = new mongoose_1.Schema({
     _id: { type: String, default: () => (0, crypto_1.randomUUID)() },
     matchId: { type: String, required: true, ref: 'Match', index: true },
@@ -17,6 +23,8 @@ const InningsSchema = new mongoose_1.Schema({
     currentStrikerId: { type: String, default: null },
     currentNonStrikerId: { type: String, default: null },
     currentBowlerId: { type: String, default: null },
+    mainUmpire: { type: InningsUmpireSchema, default: null },
+    legUmpire: { type: InningsUmpireSchema, default: null },
 }, {
     toJSON: {
         virtuals: true,

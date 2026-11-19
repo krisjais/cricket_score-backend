@@ -11,6 +11,13 @@ export interface IMatchPlayerStatusEntry {
   notes?: string | null
 }
 
+export interface IMatchUmpire {
+  name: string
+  teamId?: string | null
+  teamName?: string | null
+  playerId?: string | null
+}
+
 export interface IMatch {
   _id: string
   id: string
@@ -18,6 +25,8 @@ export interface IMatch {
   totalOvers: number
   maxOversPerBowler: number | null
   maxBowlersWithMaxOvers: number | null
+  mainUmpire: IMatchUmpire | null
+  legUmpire: IMatchUmpire | null
   venue: string | null
   status: string
   teamAId: string
@@ -58,6 +67,16 @@ const PlayerStatusEntrySchema = new Schema<IMatchPlayerStatusEntry>(
   { _id: false }
 )
 
+const MatchUmpireSchema = new Schema<IMatchUmpire>(
+  {
+    name: { type: String, required: true },
+    teamId: { type: String, default: null, ref: 'Team' },
+    teamName: { type: String, default: null },
+    playerId: { type: String, default: null, ref: 'Player' },
+  },
+  { _id: false }
+)
+
 const MatchSchema = new Schema<IMatch>(
   {
     _id: { type: String, default: () => randomUUID() },
@@ -69,6 +88,8 @@ const MatchSchema = new Schema<IMatch>(
     totalOvers: { type: Number, default: 20 },
     maxOversPerBowler: { type: Number, default: null },
     maxBowlersWithMaxOvers: { type: Number, default: null },
+    mainUmpire: { type: MatchUmpireSchema, default: null },
+    legUmpire: { type: MatchUmpireSchema, default: null },
     venue: { type: String, default: null },
     status: {
       type: String,

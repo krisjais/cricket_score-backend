@@ -204,7 +204,14 @@ async function buildMatchPayload(matchId) {
     const { teamA, teamB } = await loadSquads(match);
     if (!teamA || !teamB)
         return null;
-    const stats = match.innings.map((inn) => (0, cricket_1.computeInnings)(inningsMeta(inn), inn.balls.map(toBallData), (inn.battingTeamId === teamA.id ? teamA.players : teamB.players).map(playerLite), (inn.bowlingTeamId === teamA.id ? teamA.players : teamB.players).map(playerLite), match.totalOvers));
+    const stats = match.innings.map((inn) => {
+        const computed = (0, cricket_1.computeInnings)(inningsMeta(inn), inn.balls.map(toBallData), (inn.battingTeamId === teamA.id ? teamA.players : teamB.players).map(playerLite), (inn.bowlingTeamId === teamA.id ? teamA.players : teamB.players).map(playerLite), match.totalOvers);
+        return {
+            ...computed,
+            mainUmpire: inn.mainUmpire ?? null,
+            legUmpire: inn.legUmpire ?? null,
+        };
+    });
     stats.sort((a, b) => a.number - b.number);
     const current = match.status === 'LIVE' || match.status === 'PAUSED'
         ? stats.find((s) => s.number === match.currentInnings && s.live) ?? null
@@ -304,6 +311,8 @@ async function buildMatchPayload(matchId) {
         totalOvers: match.totalOvers,
         maxOversPerBowler: match.maxOversPerBowler ?? null,
         maxBowlersWithMaxOvers: match.maxBowlersWithMaxOvers !== undefined ? match.maxBowlersWithMaxOvers : null,
+        mainUmpire: match.mainUmpire ?? null,
+        legUmpire: match.legUmpire ?? null,
         venue: match.venue,
         status: match.status,
         seasonId: match.seasonId ?? null,
@@ -376,6 +385,8 @@ async function buildMatchSummaries() {
             totalOvers: m.totalOvers,
             maxOversPerBowler: m.maxOversPerBowler ?? null,
             maxBowlersWithMaxOvers: m.maxBowlersWithMaxOvers !== undefined ? m.maxBowlersWithMaxOvers : null,
+            mainUmpire: m.mainUmpire ?? null,
+            legUmpire: m.legUmpire ?? null,
             venue: m.venue,
             status: m.status,
             seasonId: m.seasonId ?? null,

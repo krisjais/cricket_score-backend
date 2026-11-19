@@ -4,6 +4,7 @@
  * (innings completion, targets, results) and builds API/push payloads.
  */
 import { db, Player, TeamMembership } from './db'
+import type { IMatchUmpire } from '../models/Match'
 import {
   BallData,
   buildResultText,
@@ -71,6 +72,8 @@ export interface MatchSummary {
   totalOvers: number
   maxOversPerBowler?: number | null
   maxBowlersWithMaxOvers?: number | null
+  mainUmpire?: IMatchUmpire | null
+  legUmpire?: IMatchUmpire | null
   venue: string | null
   status: string
   seasonId: string | null
@@ -362,15 +365,20 @@ export async function buildMatchPayload(matchId: string): Promise<MatchStatePayl
   const { teamA, teamB } = await loadSquads(match)
   if (!teamA || !teamB) return null
 
-  const stats: InningsStats[] = match.innings.map((inn) =>
-    computeInnings(
+  const stats: InningsStats[] = match.innings.map((inn) => {
+    const computed = computeInnings(
       inningsMeta(inn),
       inn.balls.map(toBallData),
       (inn.battingTeamId === teamA.id ? teamA.players : teamB.players).map(playerLite),
       (inn.bowlingTeamId === teamA.id ? teamA.players : teamB.players).map(playerLite),
       match.totalOvers
     )
-  )
+    return {
+      ...computed,
+      mainUmpire: (inn as any).mainUmpire ?? null,
+      legUmpire: (inn as any).legUmpire ?? null,
+    }
+  })
   stats.sort((a, b) => a.number - b.number)
 
   const current =
@@ -484,6 +492,8 @@ export async function buildMatchPayload(matchId: string): Promise<MatchStatePayl
     totalOvers: match.totalOvers,
     maxOversPerBowler: (match as any).maxOversPerBowler ?? null,
     maxBowlersWithMaxOvers: (match as any).maxBowlersWithMaxOvers !== undefined ? (match as any).maxBowlersWithMaxOvers : null,
+    mainUmpire: (match as any).mainUmpire ?? null,
+    legUmpire: (match as any).legUmpire ?? null,
     venue: match.venue,
     status: match.status,
     seasonId: match.seasonId ?? null,
@@ -557,6 +567,8 @@ export async function buildMatchSummaries(): Promise<MatchSummary[]> {
       totalOvers: m.totalOvers,
       maxOversPerBowler: (m as any).maxOversPerBowler ?? null,
       maxBowlersWithMaxOvers: (m as any).maxBowlersWithMaxOvers !== undefined ? (m as any).maxBowlersWithMaxOvers : null,
+      mainUmpire: (m as any).mainUmpire ?? null,
+      legUmpire: (m as any).legUmpire ?? null,
       venue: m.venue,
       status: m.status,
       seasonId: m.seasonId ?? null,

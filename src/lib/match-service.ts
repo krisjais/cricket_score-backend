@@ -189,7 +189,13 @@ export async function setToss(
 
 export async function startMatch(
   matchId: string,
-  input: { strikerId?: string; nonStrikerId?: string; bowlerId?: string }
+  input: {
+    strikerId?: string
+    nonStrikerId?: string
+    bowlerId?: string
+    mainUmpire?: any
+    legUmpire?: any
+  }
 ): Promise<void> {
   const match = await requireMatch(matchId)
   if (match.status !== 'TOSS_DONE')
@@ -210,6 +216,9 @@ export async function startMatch(
   if (battingTeam.players.length < 2) throw new MatchError('Batting team needs at least 2 players')
   if (bowlingTeam.players.length < 1) throw new MatchError('Bowling team needs at least 1 player')
 
+  const mainUmpire = input.mainUmpire !== undefined ? input.mainUmpire : ((match as any).mainUmpire ?? null)
+  const legUmpire = input.legUmpire !== undefined ? input.legUmpire : ((match as any).legUmpire ?? null)
+
   await db.innings.create({
     data: {
       matchId,
@@ -220,11 +229,19 @@ export async function startMatch(
       currentStrikerId: strikerId,
       currentNonStrikerId: nonStrikerId,
       currentBowlerId: bowlerId,
+      mainUmpire,
+      legUmpire,
     },
   })
   await db.match.update({
     where: { id: matchId },
-    data: { status: 'LIVE', currentInnings: 1, startedAt: new Date() },
+    data: {
+      status: 'LIVE',
+      currentInnings: 1,
+      startedAt: new Date(),
+      ...(input.mainUmpire !== undefined ? { mainUmpire: input.mainUmpire } : {}),
+      ...(input.legUmpire !== undefined ? { legUmpire: input.legUmpire } : {}),
+    },
   })
   await emitMatchUpdate(matchId)
 }
@@ -235,7 +252,13 @@ export async function startMatch(
 
 export async function startInnings2(
   matchId: string,
-  input: { strikerId?: string; nonStrikerId?: string; bowlerId?: string }
+  input: {
+    strikerId?: string
+    nonStrikerId?: string
+    bowlerId?: string
+    mainUmpire?: any
+    legUmpire?: any
+  }
 ): Promise<void> {
   const match = await requireMatch(matchId)
   if (match.status !== 'INNINGS_BREAK')
@@ -255,6 +278,16 @@ export async function startInnings2(
     throw new MatchError('Openers must belong to the batting team')
   if (!bowlIds.has(bowlerId)) throw new MatchError('Opening bowler must belong to the bowling team')
 
+  // Umpires switch after every innings! Previous leg umpire becomes main, previous main becomes leg.
+  const inn1Main = (innings1 as any).mainUmpire ?? (match as any).mainUmpire ?? null
+  const inn1Leg = (innings1 as any).legUmpire ?? (match as any).legUmpire ?? null
+
+  const switchedMain = inn1Leg
+  const switchedLeg = inn1Main
+
+  const finalMain = input.mainUmpire !== undefined ? input.mainUmpire : switchedMain
+  const finalLeg = input.legUmpire !== undefined ? input.legUmpire : switchedLeg
+
   await db.innings.create({
     data: {
       matchId,
@@ -265,11 +298,18 @@ export async function startInnings2(
       currentStrikerId: strikerId,
       currentNonStrikerId: nonStrikerId,
       currentBowlerId: bowlerId,
+      mainUmpire: finalMain,
+      legUmpire: finalLeg,
     },
   })
   await db.match.update({
     where: { id: matchId },
-    data: { status: 'LIVE', currentInnings: 2 },
+    data: {
+      status: 'LIVE',
+      currentInnings: 2,
+      mainUmpire: finalMain,
+      legUmpire: finalLeg,
+    },
   })
   await emitMatchUpdate(matchId)
 }

@@ -252,6 +252,8 @@ export interface InningsStats {
   commentary: CommentaryItem[]
   live: LiveInningsState | null
   complete: boolean
+  mainUmpire?: { name: string; teamId?: string | null; teamName?: string | null; playerId?: string | null } | null
+  legUmpire?: { name: string; teamId?: string | null; teamName?: string | null; playerId?: string | null } | null
 }
 
 interface MutableBatter {

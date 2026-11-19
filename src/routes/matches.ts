@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { Award, db, Match, Player, PlayerMatchStat } from '../lib/db'
+import { Award, db, Innings, Match, Player, PlayerMatchStat } from '../lib/db'
 import { requireAdmin } from '../lib/auth'
 import { sendOk, sendFail, unauthorized } from '../lib/api-utils'
 import { ensureDefaultSeasonAndTournament } from '../lib/bootstrap'
@@ -36,6 +36,66 @@ const ACTIONS: MatchAction[] = [
   'END_INNINGS',
   'ABANDON',
 ]
+
+function cleanUmpire(val: any): { name: string; teamId: string | null; teamName: string | null; playerId: string | null } | null {
+  if (!val || typeof val !== 'object') return null
+  const name = typeof val.name === 'string' ? val.name.trim() : ''
+  if (!name) return null
+  return {
+    name,
+    teamId: typeof val.teamId === 'string' && val.teamId.trim() ? val.teamId.trim() : null,
+    teamName: typeof val.teamName === 'string' && val.teamName.trim() ? val.teamName.trim() : null,
+    playerId: typeof val.playerId === 'string' && val.playerId.trim() ? val.playerId.trim() : null,
+  }
+}
+
+async function validateUmpires(
+  mainUmpire: ReturnType<typeof cleanUmpire>,
+  legUmpire: ReturnType<typeof cleanUmpire>,
+  teamAId: string,
+  teamBId: string,
+  currentMatchId?: string
+): Promise<string | null> {
+  if (mainUmpire?.teamId) {
+    if (mainUmpire.teamId === teamAId || mainUmpire.teamId === teamBId) {
+      return 'Main Umpire cannot be from either of the playing teams'
+    }
+  }
+  if (legUmpire?.teamId) {
+    if (legUmpire.teamId === teamAId || legUmpire.teamId === teamBId) {
+      return 'Leg Umpire cannot be from either of the playing teams'
+    }
+  }
+  if (mainUmpire?.teamId && legUmpire?.teamId && mainUmpire.teamId === legUmpire.teamId) {
+    return 'Main Umpire and Leg Umpire must be selected from two different teams'
+  }
+
+  // Check if either umpire belongs to a team currently playing in an active live match
+  const umpireTeamIds = [mainUmpire?.teamId, legUmpire?.teamId].filter(Boolean) as string[]
+  if (umpireTeamIds.length > 0) {
+    const liveMatches = await db.match.findMany({
+      where: {
+        status: { in: ['LIVE', 'PAUSED'] },
+      },
+    })
+    const liveTeamIds = new Set<string>()
+    for (const lm of liveMatches) {
+      if (lm.id !== currentMatchId) {
+        liveTeamIds.add(lm.teamAId)
+        liveTeamIds.add(lm.teamBId)
+      }
+    }
+
+    if (mainUmpire?.teamId && liveTeamIds.has(mainUmpire.teamId)) {
+      return `Main Umpire belongs to a team (${mainUmpire.teamName || 'team'}) currently playing in an active live match`
+    }
+    if (legUmpire?.teamId && liveTeamIds.has(legUmpire.teamId)) {
+      return `Leg Umpire belongs to a team (${legUmpire.teamName || 'team'}) currently playing in an active live match`
+    }
+  }
+
+  return null
+}
 
 // GET /api/matches - List all matches
 router.get('/', async (req, res) => {
@@ -109,6 +169,11 @@ router.post('/', async (req, res) => {
     maxBowlersWithMaxOvers = val
   }
 
+  const mainUmpire = cleanUmpire(req.body?.mainUmpire)
+  const legUmpire = cleanUmpire(req.body?.legUmpire)
+  const umpireErr = await validateUmpires(mainUmpire, legUmpire, teamAId, teamBId)
+  if (umpireErr) return sendFail(res, umpireErr)
+
   const match = await db.match.create({
     data: {
       teamAId,
@@ -122,6 +187,8 @@ router.post('/', async (req, res) => {
       totalOvers,
       maxOversPerBowler,
       maxBowlersWithMaxOvers,
+      mainUmpire,
+      legUmpire,
       venue: typeof venue === 'string' ? venue.trim() || null : null,
       status: 'SCHEDULED',
       scorecardStatus: 'DRAFT',
@@ -219,6 +286,18 @@ router.patch('/:id', async (req, res) => {
     }
   }
 
+  let mainUmpireUpdate: ReturnType<typeof cleanUmpire> | undefined = undefined
+  let legUmpireUpdate: ReturnType<typeof cleanUmpire> | undefined = undefined
+  if (body.mainUmpire !== undefined) mainUmpireUpdate = cleanUmpire(body.mainUmpire)
+  if (body.legUmpire !== undefined) legUmpireUpdate = cleanUmpire(body.legUmpire)
+
+  if (mainUmpireUpdate !== undefined || legUmpireUpdate !== undefined || body.teamAId || body.teamBId) {
+    const effMain = mainUmpireUpdate !== undefined ? mainUmpireUpdate : cleanUmpire((match as any).mainUmpire)
+    const effLeg = legUmpireUpdate !== undefined ? legUmpireUpdate : cleanUmpire((match as any).legUmpire)
+    const umpireErr = await validateUmpires(effMain, effLeg, teamAId, teamBId, id)
+    if (umpireErr) return sendFail(res, umpireErr)
+  }
+
   const updated = await db.match.update({
     where: { id },
     data: {
@@ -229,6 +308,8 @@ router.patch('/:id', async (req, res) => {
       teamBId,
       ...(maxOversPerBowlerUpdate !== undefined ? { maxOversPerBowler: maxOversPerBowlerUpdate } : {}),
       ...(maxBowlersWithMaxUpdate !== undefined ? { maxBowlersWithMaxOvers: maxBowlersWithMaxUpdate } : {}),
+      ...(mainUmpireUpdate !== undefined ? { mainUmpire: mainUmpireUpdate } : {}),
+      ...(legUmpireUpdate !== undefined ? { legUmpire: legUmpireUpdate } : {}),
       ...(body.seasonId !== undefined ? { seasonId: body.seasonId || null } : {}),
       ...(body.tournamentId !== undefined ? { tournamentId: body.tournamentId || null } : {}),
       ...(body.matchDate !== undefined ? { matchDate: body.matchDate ? new Date(body.matchDate) : null } : {}),
@@ -238,6 +319,18 @@ router.patch('/:id', async (req, res) => {
       ...(Array.isArray(body.playerStatuses) ? { playerStatuses: body.playerStatuses } : {}),
     },
   })
+
+  if (mainUmpireUpdate !== undefined || legUmpireUpdate !== undefined) {
+    const activeInn = await Innings.findOne({ matchId: id, number: match.currentInnings })
+    if (activeInn) {
+      await Innings.findByIdAndUpdate(activeInn._id, {
+        $set: {
+          ...(mainUmpireUpdate !== undefined ? { mainUmpire: mainUmpireUpdate } : {}),
+          ...(legUmpireUpdate !== undefined ? { legUmpire: legUmpireUpdate } : {}),
+        },
+      })
+    }
+  }
 
   await emitMatchUpdate(updated.id)
   return sendOk(res, (await buildMatchPayload(updated.id)) ?? updated)
@@ -290,10 +383,20 @@ router.post('/:id/start', async (req, res) => {
     const match = await db.match.findUnique({ where: { id } })
     if (!match) return sendFail(res, 'Match not found', 404)
 
+    const rawBody = req.body ?? {}
+    const mainUmpire = rawBody.mainUmpire !== undefined ? cleanUmpire(rawBody.mainUmpire) : undefined
+    const legUmpire = rawBody.legUmpire !== undefined ? cleanUmpire(rawBody.legUmpire) : undefined
+    if (mainUmpire !== undefined || legUmpire !== undefined) {
+      const effMain = mainUmpire !== undefined ? mainUmpire : cleanUmpire((match as any).mainUmpire)
+      const effLeg = legUmpire !== undefined ? legUmpire : cleanUmpire((match as any).legUmpire)
+      const umpireErr = await validateUmpires(effMain, effLeg, match.teamAId, match.teamBId, id)
+      if (umpireErr) return sendFail(res, umpireErr)
+    }
+
     if (match.status === 'INNINGS_BREAK') {
-      await startInnings2(id, req.body ?? {})
+      await startInnings2(id, rawBody)
     } else {
-      await startMatch(id, req.body ?? {})
+      await startMatch(id, rawBody)
     }
     return sendOk(res, await buildMatchPayload(id))
   } catch (e: any) {

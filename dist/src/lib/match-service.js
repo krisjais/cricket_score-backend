@@ -190,6 +190,8 @@ async function startMatch(matchId, input) {
         throw new MatchError('Batting team needs at least 2 players');
     if (bowlingTeam.players.length < 1)
         throw new MatchError('Bowling team needs at least 1 player');
+    const mainUmpire = input.mainUmpire !== undefined ? input.mainUmpire : (match.mainUmpire ?? null);
+    const legUmpire = input.legUmpire !== undefined ? input.legUmpire : (match.legUmpire ?? null);
     await db_1.db.innings.create({
         data: {
             matchId,
@@ -200,11 +202,19 @@ async function startMatch(matchId, input) {
             currentStrikerId: strikerId,
             currentNonStrikerId: nonStrikerId,
             currentBowlerId: bowlerId,
+            mainUmpire,
+            legUmpire,
         },
     });
     await db_1.db.match.update({
         where: { id: matchId },
-        data: { status: 'LIVE', currentInnings: 1, startedAt: new Date() },
+        data: {
+            status: 'LIVE',
+            currentInnings: 1,
+            startedAt: new Date(),
+            ...(input.mainUmpire !== undefined ? { mainUmpire: input.mainUmpire } : {}),
+            ...(input.legUmpire !== undefined ? { legUmpire: input.legUmpire } : {}),
+        },
     });
     await emitMatchUpdate(matchId);
 }
@@ -232,6 +242,13 @@ async function startInnings2(matchId, input) {
         throw new MatchError('Openers must belong to the batting team');
     if (!bowlIds.has(bowlerId))
         throw new MatchError('Opening bowler must belong to the bowling team');
+    // Umpires switch after every innings! Previous leg umpire becomes main, previous main becomes leg.
+    const inn1Main = innings1.mainUmpire ?? match.mainUmpire ?? null;
+    const inn1Leg = innings1.legUmpire ?? match.legUmpire ?? null;
+    const switchedMain = inn1Leg;
+    const switchedLeg = inn1Main;
+    const finalMain = input.mainUmpire !== undefined ? input.mainUmpire : switchedMain;
+    const finalLeg = input.legUmpire !== undefined ? input.legUmpire : switchedLeg;
     await db_1.db.innings.create({
         data: {
             matchId,
@@ -242,11 +259,18 @@ async function startInnings2(matchId, input) {
             currentStrikerId: strikerId,
             currentNonStrikerId: nonStrikerId,
             currentBowlerId: bowlerId,
+            mainUmpire: finalMain,
+            legUmpire: finalLeg,
         },
     });
     await db_1.db.match.update({
         where: { id: matchId },
-        data: { status: 'LIVE', currentInnings: 2 },
+        data: {
+            status: 'LIVE',
+            currentInnings: 2,
+            mainUmpire: finalMain,
+            legUmpire: finalLeg,
+        },
     });
     await emitMatchUpdate(matchId);
 }
