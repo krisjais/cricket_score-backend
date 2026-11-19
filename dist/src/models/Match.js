@@ -17,6 +17,8 @@ const MatchSchema = new mongoose_1.Schema({
         default: 'T20',
     },
     totalOvers: { type: Number, default: 20 },
+    maxOversPerBowler: { type: Number, default: null },
+    maxBowlersWithMaxOvers: { type: Number, default: null },
     venue: { type: String, default: null },
     status: {
         type: String,

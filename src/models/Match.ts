@@ -16,6 +16,8 @@ export interface IMatch {
   id: string
   format: string
   totalOvers: number
+  maxOversPerBowler: number | null
+  maxBowlersWithMaxOvers: number | null
   venue: string | null
   status: string
   teamAId: string
@@ -65,6 +67,8 @@ const MatchSchema = new Schema<IMatch>(
       default: 'T20',
     },
     totalOvers: { type: Number, default: 20 },
+    maxOversPerBowler: { type: Number, default: null },
+    maxBowlersWithMaxOvers: { type: Number, default: null },
     venue: { type: String, default: null },
     status: {
       type: String,

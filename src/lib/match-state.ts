@@ -10,6 +10,7 @@ import {
   computeInnings,
   InningsStats,
   isAllOut,
+  maxOversPerBowler,
   maxWicketsFor,
   oversStr,
   round2,
@@ -68,6 +69,8 @@ export interface MatchSummary {
   id: string
   format: string
   totalOvers: number
+  maxOversPerBowler?: number | null
+  maxBowlersWithMaxOvers?: number | null
   venue: string | null
   status: string
   seasonId: string | null
@@ -380,7 +383,22 @@ export async function buildMatchPayload(matchId: string): Promise<MatchStatePayl
     const battingTeam = current.battingTeamId === teamA.id ? teamA : teamB
     const bowlingTeam = current.bowlingTeamId === teamA.id ? teamA : teamB
     const bowlerStats = new Map(current.bowling.map((b) => [b.id, b]))
-    const maxOvers = Math.max(1, Math.ceil(match.totalOvers / 5))
+    const maxOvers = maxOversPerBowler(match.totalOvers, (match as any).maxOversPerBowler)
+    const maxBowlersWithMax =
+      (match as any).maxBowlersWithMaxOvers !== undefined && (match as any).maxBowlersWithMaxOvers !== null
+        ? Number((match as any).maxBowlersWithMaxOvers)
+        : match.totalOvers <= 5 && maxOvers > 1
+        ? 1
+        : null
+
+    let bowlersWithMaxCount = 0
+    for (const b of current.bowling) {
+      if (Math.floor(b.legalBalls / 6) >= maxOvers) {
+        bowlersWithMaxCount++
+      }
+    }
+    const maxQuotaFull = maxBowlersWithMax !== null && bowlersWithMaxCount >= maxBowlersWithMax
+
     const lastOverBowlerId = current.live?.lastOverBowlerId ?? null
     const atCrease = new Set(
       [current.live?.strikerId, current.live?.nonStrikerId].filter(Boolean) as string[]
@@ -395,11 +413,22 @@ export async function buildMatchPayload(matchId: string): Promise<MatchStatePayl
       const legalBalls = st?.legalBalls ?? 0
       const completeOvers = Math.floor(legalBalls / 6)
       const isCurrentBowler = p.id === (current.live?.bowlerId ?? '')
-      const limitReached = completeOvers >= maxOvers && legalBalls % 6 === 0
+
+      const reachedMax = completeOvers >= maxOvers && legalBalls % 6 === 0
+      const regularCap = Math.max(1, maxOvers - 1)
+      const reachedQuotaCap =
+        maxQuotaFull && completeOvers >= regularCap && completeOvers < maxOvers && legalBalls % 6 === 0
+
+      const limitReached = reachedMax || reachedQuotaCap
       const consecutive = lastOverBowlerId !== null && p.id === lastOverBowlerId
       let blockedReason: string | null = null
-      if (limitReached) blockedReason = `Over limit reached (${maxOvers} max)`
-      else if (consecutive) blockedReason = 'Bowled the previous over'
+      if (reachedMax) {
+        blockedReason = `Over limit reached (${maxOvers} max)`
+      } else if (reachedQuotaCap) {
+        blockedReason = `Limit reached (Only ${maxBowlersWithMax} bowler${maxBowlersWithMax === 1 ? '' : 's'} allowed ${maxOvers} overs)`
+      } else if (consecutive) {
+        blockedReason = 'Bowled the previous over'
+      }
       return {
         id: p.id,
         name: p.name,
@@ -455,6 +484,8 @@ export async function buildMatchPayload(matchId: string): Promise<MatchStatePayl
     id: match.id,
     format: match.format,
     totalOvers: match.totalOvers,
+    maxOversPerBowler: (match as any).maxOversPerBowler ?? null,
+    maxBowlersWithMaxOvers: (match as any).maxBowlersWithMaxOvers !== undefined ? (match as any).maxBowlersWithMaxOvers : null,
     venue: match.venue,
     status: match.status,
     seasonId: match.seasonId ?? null,
@@ -526,6 +557,8 @@ export async function buildMatchSummaries(): Promise<MatchSummary[]> {
       id: m.id,
       format: m.format,
       totalOvers: m.totalOvers,
+      maxOversPerBowler: (m as any).maxOversPerBowler ?? null,
+      maxBowlersWithMaxOvers: (m as any).maxBowlersWithMaxOvers !== undefined ? (m as any).maxBowlersWithMaxOvers : null,
       venue: m.venue,
       status: m.status,
       seasonId: m.seasonId ?? null,

@@ -434,12 +434,28 @@ async function applyAction(matchId, action, input = {}) {
                 throw new MatchError('Player must belong to the bowling team');
             if (ctx.live.overComplete && ctx.live.lastOverBowlerId === pid)
                 throw new MatchError('This bowler bowled the previous over');
-            const maxOvers = (0, cricket_1.maxOversPerBowler)(match.totalOvers);
+            const maxOvers = (0, cricket_1.maxOversPerBowler)(match.totalOvers, match.maxOversPerBowler);
+            const maxBowlersWithMax = match.maxBowlersWithMaxOvers !== undefined && match.maxBowlersWithMaxOvers !== null
+                ? Number(match.maxBowlersWithMaxOvers)
+                : match.totalOvers <= 5 && maxOvers > 1
+                    ? 1
+                    : null;
             const card = ctx.stats.bowling.find((b) => b.id === pid);
             const completeOvers = card ? Math.floor(card.legalBalls / 6) : 0;
             const partialBalls = card ? card.legalBalls % 6 : 0;
             if (partialBalls === 0 && completeOvers >= maxOvers)
                 throw new MatchError(`${maxOvers}-over limit reached for this bowler`);
+            if (maxBowlersWithMax !== null && partialBalls === 0 && completeOvers >= Math.max(1, maxOvers - 1)) {
+                let otherBowlersWithMaxCount = 0;
+                for (const b of ctx.stats.bowling) {
+                    if (b.id !== pid && Math.floor(b.legalBalls / 6) >= maxOvers) {
+                        otherBowlersWithMaxCount++;
+                    }
+                }
+                if (otherBowlersWithMaxCount >= maxBowlersWithMax) {
+                    throw new MatchError(`Only ${maxBowlersWithMax} bowler(s) can bowl ${maxOvers} overs. Quota already reached.`);
+                }
+            }
             await db_1.db.innings.update({ where: { id: ctx.innings.id }, data: { currentBowlerId: pid } });
             break;
         }

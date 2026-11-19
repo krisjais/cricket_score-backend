@@ -89,6 +89,30 @@ router.post('/', async (req, res) => {
   const playingXIA = Array.isArray(req.body?.playingXIA) ? req.body.playingXIA : []
   const playingXIB = Array.isArray(req.body?.playingXIB) ? req.body.playingXIB : []
 
+  const rawMaxOversPerBowler = req.body?.maxOversPerBowler
+  let maxOversPerBowler: number | null = null
+  if (rawMaxOversPerBowler !== undefined && rawMaxOversPerBowler !== null && rawMaxOversPerBowler !== '') {
+    const val = Math.floor(Number(rawMaxOversPerBowler))
+    if (!Number.isInteger(val) || val < 1 || val > 20) {
+      return sendFail(res, 'Max overs per bowler must be between 1 and 20')
+    }
+    maxOversPerBowler = val
+  } else if (totalOvers <= 5) {
+    maxOversPerBowler = 2
+  }
+
+  const rawMaxBowlersWithMax = req.body?.maxBowlersWithMaxOvers
+  let maxBowlersWithMaxOvers: number | null = null
+  if (rawMaxBowlersWithMax !== undefined && rawMaxBowlersWithMax !== null && rawMaxBowlersWithMax !== '') {
+    const val = Math.floor(Number(rawMaxBowlersWithMax))
+    if (!Number.isInteger(val) || val < 1 || val > 10) {
+      return sendFail(res, 'Max bowlers with max overs must be between 1 and 10')
+    }
+    maxBowlersWithMaxOvers = val
+  } else if (totalOvers <= 5 && (maxOversPerBowler ?? 2) > 1) {
+    maxBowlersWithMaxOvers = 1
+  }
+
   const match = await db.match.create({
     data: {
       teamAId,
@@ -100,6 +124,8 @@ router.post('/', async (req, res) => {
       playingXIB,
       format,
       totalOvers,
+      maxOversPerBowler,
+      maxBowlersWithMaxOvers,
       venue: typeof venue === 'string' ? venue.trim() || null : null,
       status: 'SCHEDULED',
       scorecardStatus: 'DRAFT',
@@ -171,6 +197,32 @@ router.patch('/:id', async (req, res) => {
     totalOvers = match.totalOvers
   }
 
+  let maxOversPerBowlerUpdate: number | null | undefined = undefined
+  if (body.maxOversPerBowler !== undefined) {
+    if (body.maxOversPerBowler === null || body.maxOversPerBowler === '' || body.maxOversPerBowler === 0) {
+      maxOversPerBowlerUpdate = null
+    } else {
+      const val = Math.floor(Number(body.maxOversPerBowler))
+      if (!Number.isInteger(val) || val < 1 || val > 20) {
+        return sendFail(res, 'Max overs per bowler must be between 1 and 20')
+      }
+      maxOversPerBowlerUpdate = val
+    }
+  }
+
+  let maxBowlersWithMaxUpdate: number | null | undefined = undefined
+  if (body.maxBowlersWithMaxOvers !== undefined) {
+    if (body.maxBowlersWithMaxOvers === null || body.maxBowlersWithMaxOvers === '' || body.maxBowlersWithMaxOvers === 0) {
+      maxBowlersWithMaxUpdate = null
+    } else {
+      const val = Math.floor(Number(body.maxBowlersWithMaxOvers))
+      if (!Number.isInteger(val) || val < 1 || val > 10) {
+        return sendFail(res, 'Max bowlers with max overs must be between 1 and 10')
+      }
+      maxBowlersWithMaxUpdate = val
+    }
+  }
+
   const updated = await db.match.update({
     where: { id },
     data: {
@@ -179,6 +231,8 @@ router.patch('/:id', async (req, res) => {
       totalOvers,
       teamAId,
       teamBId,
+      ...(maxOversPerBowlerUpdate !== undefined ? { maxOversPerBowler: maxOversPerBowlerUpdate } : {}),
+      ...(maxBowlersWithMaxUpdate !== undefined ? { maxBowlersWithMaxOvers: maxBowlersWithMaxUpdate } : {}),
       ...(body.seasonId !== undefined ? { seasonId: body.seasonId || null } : {}),
       ...(body.tournamentId !== undefined ? { tournamentId: body.tournamentId || null } : {}),
       ...(body.matchDate !== undefined ? { matchDate: body.matchDate ? new Date(body.matchDate) : null } : {}),
