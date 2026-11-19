@@ -463,8 +463,6 @@ export async function applyAction(
       const maxBowlersWithMax =
         (match as any).maxBowlersWithMaxOvers !== undefined && (match as any).maxBowlersWithMaxOvers !== null
           ? Number((match as any).maxBowlersWithMaxOvers)
-          : match.totalOvers <= 5 && maxOvers > 1
-          ? 1
           : null
 
       const card = ctx.stats.bowling.find((b) => b.id === pid)

@@ -637,12 +637,11 @@ export function maxWicketsFor(squadSize: number): number {
   return Math.max(squadSize - 1, 1)
 }
 
-/** Max overs a single bowler may bowl (standard restriction: totalOvers / 5, or custom setting). */
+/** Max overs a single bowler may bowl (strict standard: totalOvers / 5, or custom setting). */
 export function maxOversPerBowler(totalOvers: number, customMax?: number | null): number {
   if (customMax !== undefined && customMax !== null && Number.isFinite(customMax) && customMax > 0) {
     return Math.floor(customMax)
   }
-  if (totalOvers <= 5) return 2
   return Math.max(1, Math.ceil(totalOvers / 5))
 }
 

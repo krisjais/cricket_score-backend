@@ -97,8 +97,6 @@ router.post('/', async (req, res) => {
       return sendFail(res, 'Max overs per bowler must be between 1 and 20')
     }
     maxOversPerBowler = val
-  } else if (totalOvers <= 5) {
-    maxOversPerBowler = 2
   }
 
   const rawMaxBowlersWithMax = req.body?.maxBowlersWithMaxOvers
@@ -109,8 +107,6 @@ router.post('/', async (req, res) => {
       return sendFail(res, 'Max bowlers with max overs must be between 1 and 10')
     }
     maxBowlersWithMaxOvers = val
-  } else if (totalOvers <= 5 && (maxOversPerBowler ?? 2) > 1) {
-    maxBowlersWithMaxOvers = 1
   }
 
   const match = await db.match.create({

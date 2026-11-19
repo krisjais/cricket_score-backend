@@ -217,9 +217,7 @@ async function buildMatchPayload(matchId) {
         const maxOvers = (0, cricket_1.maxOversPerBowler)(match.totalOvers, match.maxOversPerBowler);
         const maxBowlersWithMax = match.maxBowlersWithMaxOvers !== undefined && match.maxBowlersWithMaxOvers !== null
             ? Number(match.maxBowlersWithMaxOvers)
-            : match.totalOvers <= 5 && maxOvers > 1
-                ? 1
-                : null;
+            : null;
         let bowlersWithMaxCount = 0;
         for (const b of current.bowling) {
             if (Math.floor(b.legalBalls / 6) >= maxOvers) {

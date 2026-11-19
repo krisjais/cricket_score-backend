@@ -387,8 +387,6 @@ export async function buildMatchPayload(matchId: string): Promise<MatchStatePayl
     const maxBowlersWithMax =
       (match as any).maxBowlersWithMaxOvers !== undefined && (match as any).maxBowlersWithMaxOvers !== null
         ? Number((match as any).maxBowlersWithMaxOvers)
-        : match.totalOvers <= 5 && maxOvers > 1
-        ? 1
         : null
 
     let bowlersWithMaxCount = 0

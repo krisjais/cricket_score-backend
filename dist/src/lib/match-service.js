@@ -437,9 +437,7 @@ async function applyAction(matchId, action, input = {}) {
             const maxOvers = (0, cricket_1.maxOversPerBowler)(match.totalOvers, match.maxOversPerBowler);
             const maxBowlersWithMax = match.maxBowlersWithMaxOvers !== undefined && match.maxBowlersWithMaxOvers !== null
                 ? Number(match.maxBowlersWithMaxOvers)
-                : match.totalOvers <= 5 && maxOvers > 1
-                    ? 1
-                    : null;
+                : null;
             const card = ctx.stats.bowling.find((b) => b.id === pid);
             const completeOvers = card ? Math.floor(card.legalBalls / 6) : 0;
             const partialBalls = card ? card.legalBalls % 6 : 0;
