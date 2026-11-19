@@ -127,10 +127,10 @@ router.post('/', async (req, res) => {
   if (!a) return sendFail(res, 'Team A not found', 404)
   if (!b) return sendFail(res, 'Team B not found', 404)
 
-  const format = rawFormat && ['T10', 'T20', 'ODI', 'CUSTOM'].includes(rawFormat) ? rawFormat : 'T20'
+  const format = rawFormat && ['T10', 'T20', 'ODI', 'CUSTOM'].includes(rawFormat) ? rawFormat : 'CUSTOM'
   let totalOvers: number
-  if (format === 'CUSTOM') {
-    totalOvers = Math.floor(Number(rawOvers ?? 0))
+  if (format === 'CUSTOM' || !FORMAT_OVERS[format]) {
+    totalOvers = Math.floor(Number(rawOvers ?? 16))
     if (!Number.isInteger(totalOvers) || totalOvers < 1 || totalOvers > 50) {
       return sendFail(res, 'Custom overs must be between 1 and 50')
     }
