@@ -15,6 +15,7 @@ function initSocketServer(httpServer) {
         pingInterval: 25000,
     });
     io.on('connection', (socket) => {
+        void socket.join('matches');
         socket.on('subscribe:match', (matchId) => {
             if (typeof matchId !== 'string' || !matchId)
                 return;

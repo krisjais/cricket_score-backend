@@ -18,13 +18,7 @@ const cricket_1 = require("./cricket");
  * Run-outs, hit wickets, retired hurt, retired out, absent, and obstructing-the-field
  * are NEVER credited as bowler wickets.
  */
-exports.OFFICIAL_BOWLER_WICKETS = new Set([
-    'BOWLED',
-    'CAUGHT',
-    'CAUGHT_AND_BOWLED',
-    'LBW',
-    'STUMPED',
-]);
+exports.OFFICIAL_BOWLER_WICKETS = cricket_1.BOWLER_CREDITED;
 const NON_DISMISSAL_WICKET_TYPES = new Set(['RETIRED_HURT', 'ABSENT']);
 function toBallData(b) {
     return {

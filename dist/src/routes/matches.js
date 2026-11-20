@@ -388,7 +388,7 @@ router.post('/:id/ball', async (req, res) => {
     const { id } = req.params;
     const body = req.body ?? {};
     try {
-        await (0, match_service_1.recordBall)(id, {
+        const payload = await (0, match_service_1.recordBall)(id, {
             runsOffBat: Number(body.runsOffBat ?? 0),
             extraType: (body.extraType ?? null),
             extraRuns: Number(body.extraRuns ?? 0),
@@ -396,7 +396,7 @@ router.post('/:id/ball', async (req, res) => {
             dismissedId: body.dismissedId ?? null,
             assistId: body.assistId ?? null,
         });
-        return (0, api_utils_1.sendOk)(res, await (0, match_service_1.buildMatchPayload)(id));
+        return (0, api_utils_1.sendOk)(res, payload);
     }
     catch (e) {
         if (e instanceof match_service_1.MatchError)
@@ -415,8 +415,8 @@ router.post('/:id/action', async (req, res) => {
     if (!action || !ACTIONS.includes(action))
         return (0, api_utils_1.sendFail)(res, 'Unknown action');
     try {
-        await (0, match_service_1.applyAction)(id, action, { playerId: body.playerId });
-        return (0, api_utils_1.sendOk)(res, await (0, match_service_1.buildMatchPayload)(id));
+        const payload = await (0, match_service_1.applyAction)(id, action, { playerId: body.playerId });
+        return (0, api_utils_1.sendOk)(res, payload);
     }
     catch (e) {
         if (e instanceof match_service_1.MatchError)
@@ -431,8 +431,8 @@ router.post('/:id/undo', async (req, res) => {
         return (0, api_utils_1.unauthorized)(res);
     const { id } = req.params;
     try {
-        await (0, match_service_1.undoLastBall)(id);
-        return (0, api_utils_1.sendOk)(res, await (0, match_service_1.buildMatchPayload)(id));
+        const payload = await (0, match_service_1.undoLastBall)(id);
+        return (0, api_utils_1.sendOk)(res, payload);
     }
     catch (e) {
         if (e instanceof match_service_1.MatchError)

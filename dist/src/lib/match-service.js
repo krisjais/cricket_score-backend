@@ -1,37 +1,4 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.isAllOut = exports.maxWicketsFor = exports.teamLite = exports.buildMatchPayload = exports.MatchError = void 0;
 exports.emitMatchUpdate = emitMatchUpdate;
@@ -56,10 +23,7 @@ Object.defineProperty(exports, "buildMatchPayload", { enumerable: true, get: fun
 Object.defineProperty(exports, "teamLite", { enumerable: true, get: function () { return match_state_1.teamLite; } });
 const broadcast_1 = require("./broadcast");
 async function emitMatchUpdate(matchId) {
-    const payload = await (0, match_state_1.buildMatchPayload)(matchId);
-    await (0, broadcast_1.emitToRoom)(`match:${matchId}`, 'match:update', payload);
-    const summaries = await (0, match_state_1.buildMatchSummaries)();
-    await (0, broadcast_1.emitToRoom)('matches', 'matches:update', summaries);
+    return await syncAndEmit(matchId);
 }
 async function loadMatchWithInnings(matchId) {
     return db_1.db.match.findUnique({
@@ -381,7 +345,7 @@ async function recordBall(matchId, input) {
             currentBowlerId: overComplete ? null : bowlerId,
         },
     });
-    await syncAndEmit(matchId);
+    return await syncAndEmit(matchId);
 }
 // ---------------------------------------------------------------------------
 // Undo last delivery
@@ -419,7 +383,7 @@ async function undoLastBall(matchId) {
     if (Object.keys(matchUpdate).length > 0) {
         await db_1.db.match.update({ where: { id: matchId }, data: matchUpdate });
     }
-    await syncAndEmit(matchId);
+    return await syncAndEmit(matchId);
 }
 async function applyAction(matchId, action, input = {}) {
     const match = await requireMatch(matchId);
@@ -553,11 +517,25 @@ async function applyAction(matchId, action, input = {}) {
         default:
             throw new MatchError('Unknown action');
     }
-    await syncAndEmit(matchId);
+    return await syncAndEmit(matchId);
 }
-/** Re-run the state machine and broadcast the fresh payload. */
+/** Re-run the state machine, broadcast real-time updates, and return the fresh payload. */
 async function syncAndEmit(matchId) {
-    const { syncMatchState } = await Promise.resolve().then(() => __importStar(require('./match-state')));
-    await syncMatchState(matchId);
-    await emitMatchUpdate(matchId);
+    await (0, match_state_1.syncMatchState)(matchId);
+    const payload = await (0, match_state_1.buildMatchPayload)(matchId);
+    if (!payload)
+        throw new MatchError('Match not found', 404);
+    // Real-time broadcast directly to match room with zero delay
+    void (0, broadcast_1.emitToRoom)(`match:${matchId}`, 'match:update', payload);
+    // Background tournament summaries broadcast (non-blocking)
+    void (async () => {
+        try {
+            const summaries = await (0, match_state_1.buildMatchSummaries)();
+            await (0, broadcast_1.emitToRoom)('matches', 'matches:update', summaries);
+        }
+        catch (err) {
+            console.error('[Broadcast matches:update error]', err);
+        }
+    })();
+    return payload;
 }

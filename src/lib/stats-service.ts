@@ -15,7 +15,7 @@ import {
   Tournament,
   withMongoTransaction,
 } from './db'
-import { isLegalBall, oversStr, round2, teamRunsOf, type BallData } from './cricket'
+import { BOWLER_CREDITED, isLegalBall, oversStr, round2, teamRunsOf, type BallData } from './cricket'
 import type { AuditAction, ICareerBreakdownRow, IMatch, IPlayerMatchStat } from '../models'
 
 /**
@@ -23,13 +23,7 @@ import type { AuditAction, ICareerBreakdownRow, IMatch, IPlayerMatchStat } from 
  * Run-outs, hit wickets, retired hurt, retired out, absent, and obstructing-the-field
  * are NEVER credited as bowler wickets.
  */
-export const OFFICIAL_BOWLER_WICKETS = new Set([
-  'BOWLED',
-  'CAUGHT',
-  'CAUGHT_AND_BOWLED',
-  'LBW',
-  'STUMPED',
-])
+export const OFFICIAL_BOWLER_WICKETS = BOWLER_CREDITED
 
 const NON_DISMISSAL_WICKET_TYPES = new Set(['RETIRED_HURT', 'ABSENT'])
 

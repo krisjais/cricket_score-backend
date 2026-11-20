@@ -15,6 +15,8 @@ export function initSocketServer(httpServer: HttpServer): Server {
   })
 
   io.on('connection', (socket: Socket) => {
+    void socket.join('matches')
+
     socket.on('subscribe:match', (matchId: string) => {
       if (typeof matchId !== 'string' || !matchId) return
       void socket.join(`match:${matchId}`)

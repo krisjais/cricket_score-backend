@@ -14,14 +14,19 @@ import {
   maxWicketsFor,
   validateBallInput,
 } from './cricket'
-import { buildMatchPayload, teamLite, MatchSummary, buildMatchSummaries, loadSquads } from './match-state'
+import {
+  buildMatchPayload,
+  teamLite,
+  MatchSummary,
+  buildMatchSummaries,
+  loadSquads,
+  syncMatchState,
+  type MatchStatePayload,
+} from './match-state'
 import { emitToRoom } from './broadcast'
 
-export async function emitMatchUpdate(matchId: string): Promise<void> {
-  const payload = await buildMatchPayload(matchId)
-  await emitToRoom(`match:${matchId}`, 'match:update', payload)
-  const summaries = await buildMatchSummaries()
-  await emitToRoom('matches', 'matches:update', summaries)
+export async function emitMatchUpdate(matchId: string): Promise<MatchStatePayload> {
+  return await syncAndEmit(matchId)
 }
 
 interface InningsRow {
@@ -318,7 +323,7 @@ export async function startInnings2(
 // Record a delivery
 // ---------------------------------------------------------------------------
 
-export async function recordBall(matchId: string, input: BallEventInput): Promise<void> {
+export async function recordBall(matchId: string, input: BallEventInput): Promise<MatchStatePayload> {
   const match = await requireMatch(matchId)
   if (match.status !== 'LIVE') throw new MatchError('Scoring is only allowed while the match is LIVE')
   const ctx = await liveInningsOf(match)
@@ -410,14 +415,14 @@ export async function recordBall(matchId: string, input: BallEventInput): Promis
     },
   })
 
-  await syncAndEmit(matchId)
+  return await syncAndEmit(matchId)
 }
 
 // ---------------------------------------------------------------------------
 // Undo last delivery
 // ---------------------------------------------------------------------------
 
-export async function undoLastBall(matchId: string): Promise<void> {
+export async function undoLastBall(matchId: string): Promise<MatchStatePayload> {
   const match = await requireMatch(matchId)
   if (!['LIVE', 'INNINGS_BREAK', 'COMPLETED'].includes(match.status))
     throw new MatchError('Undo is not available for this match state')
@@ -450,7 +455,7 @@ export async function undoLastBall(matchId: string): Promise<void> {
   if (Object.keys(matchUpdate).length > 0) {
     await db.match.update({ where: { id: matchId }, data: matchUpdate })
   }
-  await syncAndEmit(matchId)
+  return await syncAndEmit(matchId)
 }
 
 // ---------------------------------------------------------------------------
@@ -470,7 +475,7 @@ export async function applyAction(
   matchId: string,
   action: MatchAction,
   input: { playerId?: string } = {}
-): Promise<void> {
+): Promise<MatchStatePayload> {
   const match = await requireMatch(matchId)
 
   switch (action) {
@@ -604,14 +609,29 @@ export async function applyAction(
     default:
       throw new MatchError('Unknown action')
   }
-  await syncAndEmit(matchId)
+  return await syncAndEmit(matchId)
 }
 
-/** Re-run the state machine and broadcast the fresh payload. */
-async function syncAndEmit(matchId: string) {
-  const { syncMatchState } = await import('./match-state')
+/** Re-run the state machine, broadcast real-time updates, and return the fresh payload. */
+async function syncAndEmit(matchId: string): Promise<MatchStatePayload> {
   await syncMatchState(matchId)
-  await emitMatchUpdate(matchId)
+  const payload = await buildMatchPayload(matchId)
+  if (!payload) throw new MatchError('Match not found', 404)
+
+  // Real-time broadcast directly to match room with zero delay
+  void emitToRoom(`match:${matchId}`, 'match:update', payload)
+
+  // Background tournament summaries broadcast (non-blocking)
+  void (async () => {
+    try {
+      const summaries = await buildMatchSummaries()
+      await emitToRoom('matches', 'matches:update', summaries)
+    } catch (err) {
+      console.error('[Broadcast matches:update error]', err)
+    }
+  })()
+
+  return payload
 }
 
 // re-export for routes

@@ -3,15 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const db_1 = require("../lib/db");
 const api_utils_1 = require("../lib/api-utils");
+const cricket_1 = require("../lib/cricket");
 const router = (0, express_1.Router)();
-const BOWLER_WICKETS = new Set([
-    'BOWLED',
-    'CAUGHT',
-    'CAUGHT_AND_BOWLED',
-    'LBW',
-    'STUMPED',
-]);
-const round2 = (n) => Math.round(n * 100) / 100;
 function buildDivisionAwards(pool, includeBoundaryHonors = false) {
     const topBatsmen = [...pool]
         .filter((p) => p.runs > 0 || p.ballsFaced > 0)
@@ -172,7 +165,7 @@ router.get('/', async (_req, res) => {
                         else {
                             st.runsConceded += b.runsOffBat;
                         }
-                        if (b.isWicket && BOWLER_WICKETS.has(b.wicketType || '')) {
+                        if (b.isWicket && cricket_1.BOWLER_CREDITED.has(b.wicketType || '')) {
                             st.wickets++;
                         }
                     }
@@ -212,9 +205,9 @@ router.get('/', async (_req, res) => {
             const mvpPoints = s.runs + s.wickets * 20 + fieldingDismissals * 10;
             return {
                 ...s,
-                strikeRate: s.ballsFaced > 0 ? round2((s.runs * 100) / s.ballsFaced) : 0,
-                overs: `${Math.floor(s.legalBalls / 6)}.${s.legalBalls % 6}`,
-                economy: s.legalBalls > 0 ? round2((s.runsConceded * 6) / s.legalBalls) : 0,
+                strikeRate: s.ballsFaced > 0 ? (0, cricket_1.round2)((s.runs * 100) / s.ballsFaced) : 0,
+                overs: (0, cricket_1.oversStr)(s.legalBalls),
+                economy: s.legalBalls > 0 ? (0, cricket_1.round2)((s.runsConceded * 6) / s.legalBalls) : 0,
                 catchRunOuts,
                 fieldingDismissals,
                 mvpPoints,

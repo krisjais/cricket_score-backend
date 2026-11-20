@@ -1,16 +1,9 @@
 import { Router } from 'express'
 import { db } from '../lib/db'
 import { sendOk, sendFail } from '../lib/api-utils'
+import { BOWLER_CREDITED, oversStr, round2 } from '../lib/cricket'
 
 const router = Router()
-
-const BOWLER_WICKETS = new Set([
-  'BOWLED',
-  'CAUGHT',
-  'CAUGHT_AND_BOWLED',
-  'LBW',
-  'STUMPED',
-])
 
 export interface AwardPlayerStat {
   playerId: string
@@ -62,8 +55,6 @@ interface DivisionAwards {
   topSixes?: AwardPlayerStat[]
   topFours?: AwardPlayerStat[]
 }
-
-const round2 = (n: number) => Math.round(n * 100) / 100
 
 function buildDivisionAwards(
   pool: AwardPlayerStat[],
@@ -255,7 +246,7 @@ router.get('/', async (_req, res) => {
             } else {
               st.runsConceded += b.runsOffBat
             }
-            if (b.isWicket && BOWLER_WICKETS.has(b.wicketType || '')) {
+            if (b.isWicket && BOWLER_CREDITED.has(b.wicketType || '')) {
               st.wickets++
             }
           }
@@ -296,7 +287,7 @@ router.get('/', async (_req, res) => {
       return {
         ...s,
         strikeRate: s.ballsFaced > 0 ? round2((s.runs * 100) / s.ballsFaced) : 0,
-        overs: `${Math.floor(s.legalBalls / 6)}.${s.legalBalls % 6}`,
+        overs: oversStr(s.legalBalls),
         economy: s.legalBalls > 0 ? round2((s.runsConceded * 6) / s.legalBalls) : 0,
         catchRunOuts,
         fieldingDismissals,

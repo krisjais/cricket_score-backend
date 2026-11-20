@@ -4,25 +4,26 @@ const express_1 = require("express");
 const db_1 = require("../lib/db");
 const api_utils_1 = require("../lib/api-utils");
 const cricket_1 = require("../lib/cricket");
+const stats_service_1 = require("../lib/stats-service");
 const router = (0, express_1.Router)();
 /**
  * Qualification thresholds prevent single-appearance outliers from topping rate-based rankings.
  */
 function qualificationRule(category, scopeMatchesCount) {
     const minInnings = scopeMatchesCount <= 2 ? 1 : 2;
-    const minBallsFaced = scopeMatchesCount <= 2 ? 6 : 20;
-    const minLegalBallsBowled = scopeMatchesCount <= 2 ? 6 : 18;
+    const minBallsFaced = scopeMatchesCount <= 2 ? 1 : 20;
+    const minLegalBallsBowled = scopeMatchesCount <= 2 ? 1 : 18;
     switch (category) {
         case 'batting_avg':
-            return { minInnings, label: `Min ${minInnings} innings & at least 1 dismissal` };
+            return { minInnings, label: `Min ${minInnings} innings` };
         case 'strike_rate':
-            return { minBallsFaced, label: `Min ${minBallsFaced} balls faced` };
+            return { minBallsFaced, label: `Min ${minBallsFaced} ball${minBallsFaced === 1 ? '' : 's'} faced` };
         case 'bowling_avg':
-            return { minLegalBallsBowled, label: `Min ${minLegalBallsBowled} legal balls & 1+ wicket` };
+            return { minLegalBallsBowled, label: `Min ${minLegalBallsBowled} legal ball${minLegalBallsBowled === 1 ? '' : 's'} & 1+ wicket` };
         case 'economy':
-            return { minLegalBallsBowled, label: `Min ${minLegalBallsBowled} legal balls bowled` };
+            return { minLegalBallsBowled, label: `Min ${minLegalBallsBowled} legal ball${minLegalBallsBowled === 1 ? '' : 's'} bowled` };
         default:
-            return { label: 'All verified matches' };
+            return { label: 'All matches' };
     }
 }
 // GET /api/leaderboards
@@ -34,30 +35,57 @@ router.get('/', async (req, res) => {
         const seasonId = typeof req.query.seasonId === 'string' && req.query.seasonId ? req.query.seasonId : null;
         const tournamentId = typeof req.query.tournamentId === 'string' && req.query.tournamentId ? req.query.tournamentId : null;
         const teamId = typeof req.query.teamId === 'string' && req.query.teamId ? req.query.teamId : null;
-        const verifiedMatchQuery = { status: 'COMPLETED', scorecardStatus: 'VERIFIED' };
+        // Track all completed and live matches in scope (non-abandoned)
+        const matchQuery = { status: { $ne: 'ABANDONED' } };
         if (scope === 'SEASON' && seasonId)
-            verifiedMatchQuery.seasonId = seasonId;
+            matchQuery.seasonId = seasonId;
         if (scope === 'TOURNAMENT' && tournamentId)
-            verifiedMatchQuery.tournamentId = tournamentId;
-        const verifiedMatches = await db_1.Match.find(verifiedMatchQuery).select({ _id: 1 }).lean();
-        const verifiedMatchIds = verifiedMatches.map((m) => m._id);
-        if (verifiedMatchIds.length === 0) {
+            matchQuery.tournamentId = tournamentId;
+        const matches = await db_1.Match.find(matchQuery).select({ _id: 1, scorecardStatus: 1 }).lean();
+        const matchIds = matches.map((m) => m._id);
+        if (matchIds.length === 0) {
             return (0, api_utils_1.sendOk)(res, {
                 category,
                 scope,
                 qualification: qualificationRule(category, 0).label,
                 totalVerifiedMatches: 0,
+                totalMatches: 0,
+                honors: {
+                    bestBatsman: null,
+                    bestBowler: null,
+                    bestFielder: null,
+                    playerOfTournament: null,
+                    mostSixes: null,
+                    mostFours: null,
+                },
                 entries: [],
             });
         }
-        const statQuery = { matchId: { $in: verifiedMatchIds } };
+        const statQuery = { matchId: { $in: matchIds } };
         if (scope === 'TEAM' && teamId)
             statQuery.teamId = teamId;
-        const [matchStats, players, teams] = await Promise.all([
+        const [existingMatchStats, players, teams] = await Promise.all([
             db_1.PlayerMatchStat.find(statQuery).lean(),
             db_1.Player.find({ status: { $ne: 'MERGED' } }).lean(),
             db_1.Team.find({}).lean(),
         ]);
+        // Find matches that don't have persisted PlayerMatchStat rows yet (live or unverified completed)
+        const matchesWithPersistedStats = new Set(existingMatchStats.map((s) => s.matchId));
+        const missingMatchIds = matchIds.filter((mid) => !matchesWithPersistedStats.has(mid));
+        let dynamicStats = [];
+        if (missingMatchIds.length > 0) {
+            const computed = await Promise.all(missingMatchIds.map((mid) => (0, stats_service_1.computeMatchPlayerStats)(mid, 0)
+                .then((r) => r.rows)
+                .catch((err) => {
+                console.error(`Leaderboard computeMatchPlayerStats error for ${mid}:`, err);
+                return [];
+            })));
+            dynamicStats = computed.flat();
+            if (scope === 'TEAM' && teamId) {
+                dynamicStats = dynamicStats.filter((s) => s.teamId === teamId);
+            }
+        }
+        const matchStats = [...existingMatchStats, ...dynamicStats];
         const playerMap = new Map(players.map((p) => [p._id, p]));
         const teamMap = new Map(teams.map((t) => [t._id, t]));
         const buckets = new Map();
@@ -97,7 +125,7 @@ router.get('/', async (req, res) => {
             b.latestTeamId = st.teamId;
             if (st.played && !st.absent)
                 b.matches += 1;
-            if (st.batting.innings > 0) {
+            if (st.batting && st.batting.innings > 0) {
                 b.inningsBatted += st.batting.innings;
                 b.runs += st.batting.runs;
                 b.ballsFaced += st.batting.balls;
@@ -109,7 +137,7 @@ router.get('/', async (req, res) => {
                 b.fifties += st.batting.fifty;
                 b.hundreds += st.batting.hundred;
             }
-            if (st.bowling.innings > 0) {
+            if (st.bowling && st.bowling.innings > 0) {
                 b.inningsBowled += st.bowling.innings;
                 b.legalBalls += st.bowling.legalBalls;
                 b.runsConceded += st.bowling.runsConceded;
@@ -122,18 +150,22 @@ router.get('/', async (req, res) => {
                     b.bestR = st.bowling.bestFiguresRuns;
                 }
             }
-            b.catches += st.fielding.catches;
-            b.runOuts += st.fielding.runOuts;
-            b.stumpings += st.fielding.stumpings;
+            if (st.fielding) {
+                b.catches += st.fielding.catches;
+                b.runOuts += st.fielding.runOuts;
+                b.stumpings += st.fielding.stumpings;
+            }
             if (st.isPlayerOfMatch)
                 b.playerOfMatch += 1;
         }
-        const qual = qualificationRule(category, verifiedMatches.length);
+        const verifiedMatchesCount = matches.filter((m) => m.scorecardStatus === 'VERIFIED').length;
+        const totalMatchesCount = matches.length;
+        const qual = qualificationRule(category, totalMatchesCount);
         const rows = [...buckets.values()].map((b) => {
             const p = playerMap.get(b.playerId);
             const tm = (b.latestTeamId ? teamMap.get(b.latestTeamId) : null) ?? (p.teamId ? teamMap.get(p.teamId) : null);
             const dismissals = b.inningsBatted - b.notOuts;
-            const battingAverage = dismissals > 0 ? (0, cricket_1.round2)(b.runs / dismissals) : null;
+            const battingAverage = dismissals > 0 ? (0, cricket_1.round2)(b.runs / dismissals) : (b.runs > 0 ? b.runs : null);
             const strikeRate = b.ballsFaced > 0 ? (0, cricket_1.round2)((b.runs * 100) / b.ballsFaced) : 0;
             const bowlingAverage = b.wickets > 0 ? (0, cricket_1.round2)(b.runsConceded / b.wickets) : null;
             const economy = b.legalBalls > 0 ? (0, cricket_1.round2)((b.runsConceded * 6) / b.legalBalls) : 0;
@@ -145,7 +177,7 @@ router.get('/', async (req, res) => {
                 role: p.role,
                 avatarUrl: p.avatarUrl ?? null,
                 isVerified: Boolean(p.isVerified),
-                team: tm ? { id: tm._id, name: tm.name, shortName: tm.shortName, color: tm.color } : null,
+                team: tm ? { id: tm._id, name: tm.name, shortName: tm.shortName, color: tm.color, logoUrl: tm.logoUrl ?? null } : null,
                 matches: b.matches,
                 inningsBatted: b.inningsBatted,
                 runs: b.runs,
@@ -175,6 +207,21 @@ router.get('/', async (req, res) => {
                 allRounderScore,
             };
         });
+        // Compute top honors for spotlight
+        const topRuns = [...rows].filter((r) => r.runs > 0).sort((a, b) => b.runs - a.runs || b.strikeRate - a.strikeRate);
+        const topWickets = [...rows].filter((r) => r.wickets > 0).sort((a, b) => b.wickets - a.wickets || a.economy - b.economy);
+        const topFielders = [...rows].filter((r) => (r.catches + r.runOuts + r.stumpings) > 0).sort((a, b) => (b.catches + b.runOuts + b.stumpings) - (a.catches + a.runOuts + a.stumpings));
+        const topMvp = [...rows].filter((r) => r.allRounderScore > 0).sort((a, b) => b.allRounderScore - a.allRounderScore);
+        const topSixes = [...rows].filter((r) => r.sixes > 0).sort((a, b) => b.sixes - a.sixes || b.runs - a.runs);
+        const topFours = [...rows].filter((r) => r.fours > 0).sort((a, b) => b.fours - a.fours || b.runs - a.runs);
+        const honors = {
+            bestBatsman: topRuns[0] ?? null,
+            bestBowler: topWickets[0] ?? null,
+            bestFielder: topFielders[0] ?? null,
+            playerOfTournament: topMvp[0] ?? null,
+            mostSixes: topSixes[0] ?? null,
+            mostFours: topFours[0] ?? null,
+        };
         const filtered = rows.filter((r) => {
             switch (category) {
                 case 'runs':
@@ -247,7 +294,9 @@ router.get('/', async (req, res) => {
             category,
             scope,
             qualification: qual.label,
-            totalVerifiedMatches: verifiedMatches.length,
+            totalVerifiedMatches: verifiedMatchesCount > 0 ? verifiedMatchesCount : totalMatchesCount,
+            totalMatches: totalMatchesCount,
+            honors,
             entries: filtered.slice(0, 50).map((r, i) => ({ ...r, rank: i + 1 })),
         });
     }

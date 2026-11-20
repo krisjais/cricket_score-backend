@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { db } from '../lib/db'
 import { sendOk, sendFail } from '../lib/api-utils'
-import { maxWicketsFor } from '../lib/cricket'
+import { maxWicketsFor, oversStr } from '../lib/cricket'
 
 const router = Router()
 
@@ -28,8 +28,6 @@ export interface StandingsRow {
 }
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000
-
-const oversStr = (balls: number) => `${Math.floor(balls / 6)}.${balls % 6}`
 
 // GET /api/standings - Dynamic Points Table calculated from MongoDB matches
 router.get('/', async (_req, res) => {

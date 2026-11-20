@@ -6,7 +6,6 @@ const api_utils_1 = require("../lib/api-utils");
 const cricket_1 = require("../lib/cricket");
 const router = (0, express_1.Router)();
 const round3 = (n) => Math.round(n * 1000) / 1000;
-const oversStr = (balls) => `${Math.floor(balls / 6)}.${balls % 6}`;
 // GET /api/standings - Dynamic Points Table calculated from MongoDB matches
 router.get('/', async (_req, res) => {
     try {
@@ -119,8 +118,8 @@ router.get('/', async (_req, res) => {
             const rateAgainst = r.ballsAgainst > 0 ? r.runsAgainst / (r.ballsAgainst / 6) : 0;
             return {
                 ...r,
-                forDisplay: `${r.runsFor} (${oversStr(r.ballsFor)} ov)`,
-                againstDisplay: `${r.runsAgainst} (${oversStr(r.ballsAgainst)} ov)`,
+                forDisplay: `${r.runsFor} (${(0, cricket_1.oversStr)(r.ballsFor)} ov)`,
+                againstDisplay: `${r.runsAgainst} (${(0, cricket_1.oversStr)(r.ballsAgainst)} ov)`,
                 nrr: r.ballsFor > 0 && r.ballsAgainst > 0 ? round3(rateFor - rateAgainst) : 0,
                 recentForm: r.recentForm.slice(0, 5),
             };

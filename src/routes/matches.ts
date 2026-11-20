@@ -413,7 +413,7 @@ router.post('/:id/ball', async (req, res) => {
   const { id } = req.params
   const body = req.body ?? {}
   try {
-    await recordBall(id, {
+    const payload = await recordBall(id, {
       runsOffBat: Number(body.runsOffBat ?? 0),
       extraType: (body.extraType ?? null) as never,
       extraRuns: Number(body.extraRuns ?? 0),
@@ -421,7 +421,7 @@ router.post('/:id/ball', async (req, res) => {
       dismissedId: body.dismissedId ?? null,
       assistId: body.assistId ?? null,
     })
-    return sendOk(res, await buildMatchPayload(id))
+    return sendOk(res, payload)
   } catch (e: any) {
     if (e instanceof MatchError) return sendFail(res, e.message, e.status)
     return sendFail(res, e?.message || 'Error recording ball', 500)
@@ -439,8 +439,8 @@ router.post('/:id/action', async (req, res) => {
   if (!action || !ACTIONS.includes(action)) return sendFail(res, 'Unknown action')
 
   try {
-    await applyAction(id, action, { playerId: body.playerId })
-    return sendOk(res, await buildMatchPayload(id))
+    const payload = await applyAction(id, action, { playerId: body.playerId })
+    return sendOk(res, payload)
   } catch (e: any) {
     if (e instanceof MatchError) return sendFail(res, e.message, e.status)
     return sendFail(res, e?.message || 'Error applying action', 500)
@@ -454,8 +454,8 @@ router.post('/:id/undo', async (req, res) => {
 
   const { id } = req.params
   try {
-    await undoLastBall(id)
-    return sendOk(res, await buildMatchPayload(id))
+    const payload = await undoLastBall(id)
+    return sendOk(res, payload)
   } catch (e: any) {
     if (e instanceof MatchError) return sendFail(res, e.message, e.status)
     return sendFail(res, e?.message || 'Error undoing last ball', 500)
