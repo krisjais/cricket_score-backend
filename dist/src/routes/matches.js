@@ -18,6 +18,7 @@ const ACTIONS = [
     'PAUSE',
     'RESUME',
     'END_INNINGS',
+    'END_MATCH',
     'ABANDON',
 ];
 function cleanUmpire(val) {

@@ -505,6 +505,69 @@ async function applyAction(matchId, action, input = {}) {
             }
             break;
         }
+        case 'END_MATCH': {
+            if (['COMPLETED', 'ABANDONED'].includes(match.status)) {
+                if (!match.endedAt) {
+                    await db_1.db.match.update({ where: { id: matchId }, data: { endedAt: new Date() } });
+                }
+                break;
+            }
+            const { teamA, teamB } = await requireSquads(match);
+            const nameOf = (id) => (id === teamA.id ? teamA.name : teamB.name);
+            // Mark in-progress innings as completed
+            const currentInn = match.innings.find((i) => i.status === 'IN_PROGRESS');
+            if (currentInn) {
+                await db_1.db.innings.update({ where: { id: currentInn.id }, data: { status: 'COMPLETED' } });
+            }
+            const inn1 = match.innings.find((i) => i.number === 1);
+            const inn2 = match.innings.find((i) => i.number === 2);
+            const stats1 = inn1
+                ? (0, cricket_1.computeInnings)({
+                    inningsId: inn1.id,
+                    number: 1,
+                    battingTeamId: inn1.battingTeamId,
+                    bowlingTeamId: inn1.bowlingTeamId,
+                    status: inn1.status,
+                    currentStrikerId: inn1.currentStrikerId,
+                    currentNonStrikerId: inn1.currentNonStrikerId,
+                    currentBowlerId: inn1.currentBowlerId,
+                }, inn1.balls.map(toBallData), (inn1.battingTeamId === teamA.id ? teamA.players : teamB.players).map(playerLite), (inn1.bowlingTeamId === teamA.id ? teamA.players : teamB.players).map(playerLite), match.totalOvers)
+                : null;
+            const stats2 = inn2
+                ? (0, cricket_1.computeInnings)({
+                    inningsId: inn2.id,
+                    number: 2,
+                    battingTeamId: inn2.battingTeamId,
+                    bowlingTeamId: inn2.bowlingTeamId,
+                    status: inn2.status,
+                    currentStrikerId: inn2.currentStrikerId,
+                    currentNonStrikerId: inn2.currentNonStrikerId,
+                    currentBowlerId: inn2.currentBowlerId,
+                }, inn2.balls.map(toBallData), (inn2.battingTeamId === teamA.id ? teamA.players : teamB.players).map(playerLite), (inn2.bowlingTeamId === teamA.id ? teamA.players : teamB.players).map(playerLite), match.totalOvers)
+                : null;
+            let resultText = match.resultText || 'Match concluded';
+            let winnerId = match.winnerId || null;
+            if (stats1 && stats2 && inn2) {
+                const battingTeam2 = inn2.battingTeamId === teamA.id ? teamA : teamB;
+                const res = (0, cricket_1.buildResultText)(stats1, stats2, battingTeam2.players.length, nameOf);
+                resultText = res.text;
+                winnerId = res.winnerId;
+            }
+            else if (stats1 && inn1) {
+                const batTeam = inn1.battingTeamId === teamA.id ? teamA : teamB;
+                resultText = `${batTeam.name} scored ${stats1.runs}/${stats1.wickets} in ${Math.floor(stats1.legalBalls / 6)}.${stats1.legalBalls % 6} ov`;
+            }
+            await db_1.db.match.update({
+                where: { id: matchId },
+                data: {
+                    status: 'COMPLETED',
+                    resultText,
+                    winnerId,
+                    endedAt: match.endedAt || new Date(),
+                },
+            });
+            break;
+        }
         case 'ABANDON': {
             if (['COMPLETED', 'ABANDONED'].includes(match.status))
                 throw new MatchError('Match is already finished');

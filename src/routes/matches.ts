@@ -34,6 +34,7 @@ const ACTIONS: MatchAction[] = [
   'PAUSE',
   'RESUME',
   'END_INNINGS',
+  'END_MATCH',
   'ABANDON',
 ]
 
