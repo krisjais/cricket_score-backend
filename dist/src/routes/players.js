@@ -85,15 +85,18 @@ router.get('/search', async (req, res) => {
             db_1.Team.find({}).lean(),
             db_1.PlayerCareerStat.find({}).lean(),
         ]);
-        const teamMap = new Map(teams.map((t) => [t._id, t]));
-        const careerMap = new Map(careerDocs.map((c) => [c.playerId, c]));
+        const teamMap = new Map(teams.map((t) => [String(t._id), t]));
+        const careerMap = new Map(careerDocs.map((c) => [String(c.playerId), c]));
         return (0, api_utils_1.sendOk)(res, players.map((p) => {
-            const tm = p.teamId ? teamMap.get(p.teamId) : null;
-            const c = careerMap.get(p._id);
+            const tm = p.teamId ? teamMap.get(String(p.teamId)) : null;
+            const c = careerMap.get(String(p._id));
             return {
                 ...p,
-                id: p._id,
-                team: tm ? { id: tm._id, name: tm.name, shortName: tm.shortName, color: tm.color } : null,
+                id: String(p._id),
+                team: tm ? { id: String(tm._id), name: tm.name, shortName: tm.shortName, color: tm.color, logoUrl: tm.logoUrl } : null,
+                matches: c?.matches ?? 0,
+                runs: c?.runs ?? 0,
+                wickets: c?.wickets ?? 0,
                 careerSummary: c
                     ? { matches: c.matches, runs: c.runs, wickets: c.wickets, battingAverage: c.battingAverage, economy: c.economy }
                     : { matches: 0, runs: 0, wickets: 0, battingAverage: null, economy: 0 },
@@ -134,23 +137,23 @@ router.get('/public/:playerCodeOrId', async (req, res) => {
             db_1.Match.find({ scorecardStatus: 'VERIFIED' }).select({ _id: 1, format: 1, venue: 1 }).lean(),
             db_1.Award.find({ playerId: player._id }).sort({ awardedAt: -1 }).lean(),
         ]);
-        const teamMap = new Map(teams.map((t) => [t._id, t]));
-        const seasonMap = new Map(seasons.map((s) => [s._id, s]));
-        const tournamentMap = new Map(tournaments.map((t) => [t._id, t]));
-        const verifiedMap = new Map(verifiedMatches.map((m) => [m._id, m]));
+        const teamMap = new Map(teams.map((t) => [String(t._id), t]));
+        const seasonMap = new Map(seasons.map((s) => [String(s._id), s]));
+        const tournamentMap = new Map(tournaments.map((t) => [String(t._id), t]));
+        const verifiedMap = new Map(verifiedMatches.map((m) => [String(m._id), m]));
         const enrichedMemberships = memberships
             .map((m) => {
-            const s = seasonMap.get(m.seasonId);
-            const t = teamMap.get(m.teamId);
+            const s = m.seasonId ? seasonMap.get(String(m.seasonId)) : null;
+            const t = m.teamId ? teamMap.get(String(m.teamId)) : null;
             return {
-                id: m._id,
+                id: String(m._id),
                 seasonId: m.seasonId,
                 teamId: m.teamId,
                 joinedAt: m.joinedAt,
                 status: m.status,
                 designation: m.designation,
-                season: s ? { id: s._id, name: s.name, code: s.code, year: s.year, status: s.status } : null,
-                team: t ? { id: t._id, name: t.name, shortName: t.shortName, color: t.color, logoUrl: t.logoUrl } : null,
+                season: s ? { id: String(s._id), name: s.name, code: s.code, year: s.year, status: s.status } : null,
+                team: t ? { id: String(t._id), name: t.name, shortName: t.shortName, color: t.color, logoUrl: t.logoUrl } : null,
             };
         })
             .sort((a, b) => (b.season?.year ?? 0) - (a.season?.year ?? 0));
@@ -164,10 +167,10 @@ router.get('/public/:playerCodeOrId', async (req, res) => {
                 .lean()
             : [];
         const recentMatches = recentMatchStats.map((st) => {
-            const tm = teamMap.get(st.teamId);
-            const opp = teamMap.get(st.opponentTeamId);
-            const s = st.seasonId ? seasonMap.get(st.seasonId) : null;
-            const tr = st.tournamentId ? tournamentMap.get(st.tournamentId) : null;
+            const tm = st.teamId ? teamMap.get(String(st.teamId)) : null;
+            const opp = st.opponentTeamId ? teamMap.get(String(st.opponentTeamId)) : null;
+            const s = st.seasonId ? seasonMap.get(String(st.seasonId)) : null;
+            const tr = st.tournamentId ? tournamentMap.get(String(st.tournamentId)) : null;
             return {
                 id: st._id,
                 matchId: st.matchId,
