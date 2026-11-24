@@ -439,6 +439,65 @@ router.post('/admin/remove', async (req, res) => {
   }
 })
 
+// DELETE /api/captains/admin/assignments/:id - Permanently delete a captaincy assignment
+router.delete('/admin/assignments/:id', async (req, res) => {
+  const session = await requireAdmin(req)
+  if (!session) return unauthorized(res)
+
+  try {
+    await connectDB()
+    const { id } = req.params
+    if (!id) return sendFail(res, 'Assignment ID is required', 400)
+
+    const assignment = await CaptaincyAssignment.findById(id)
+    if (!assignment) return sendFail(res, 'Captaincy assignment not found', 404)
+
+    // If deleting an active assignment, reset squad designation
+    if (assignment.status === 'active') {
+      await TeamMembership.updateOne(
+        { seasonId: assignment.seasonId, teamId: assignment.teamId, playerId: assignment.playerId },
+        { $set: { designation: 'PLAYER' } }
+      )
+    }
+
+    await CaptaincyAssignment.deleteOne({ _id: assignment._id })
+    await CaptaincyAuditLog.deleteMany({ assignmentId: String(assignment._id) })
+
+    return sendOk(res, { success: true, deletedId: id })
+  } catch (err: any) {
+    return sendFail(res, err?.message || 'Failed to delete captaincy assignment', 500)
+  }
+})
+
+// POST /api/captains/admin/delete - Alternative POST endpoint for deleting assignment
+router.post('/admin/delete', async (req, res) => {
+  const session = await requireAdmin(req)
+  if (!session) return unauthorized(res)
+
+  try {
+    await connectDB()
+    const assignmentId = req.body?.assignmentId || req.body?.id
+    if (!assignmentId) return sendFail(res, 'assignmentId is required', 400)
+
+    const assignment = await CaptaincyAssignment.findById(assignmentId)
+    if (!assignment) return sendFail(res, 'Captaincy assignment not found', 404)
+
+    if (assignment.status === 'active') {
+      await TeamMembership.updateOne(
+        { seasonId: assignment.seasonId, teamId: assignment.teamId, playerId: assignment.playerId },
+        { $set: { designation: 'PLAYER' } }
+      )
+    }
+
+    await CaptaincyAssignment.deleteOne({ _id: assignment._id })
+    await CaptaincyAuditLog.deleteMany({ assignmentId: String(assignment._id) })
+
+    return sendOk(res, { success: true, deletedId: assignmentId })
+  } catch (err: any) {
+    return sendFail(res, err?.message || 'Failed to delete captaincy assignment', 500)
+  }
+})
+
 // GET /api/captains/admin/audit-logs - View audit history
 router.get('/admin/audit-logs', async (req, res) => {
   const session = await requireAdmin(req)
