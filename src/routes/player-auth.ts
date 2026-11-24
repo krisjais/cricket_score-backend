@@ -520,10 +520,11 @@ router.post('/refresh', async (req, res) => {
     tokenDoc.revokedAt = new Date()
     await tokenDoc.save()
 
-    await issuePlayerAuthCookies(res, user, player, req)
+    const { accessToken } = await issuePlayerAuthCookies(res, user, player, req)
 
     return sendOk(res, {
       refreshed: true,
+      accessToken,
       user: sanitizeUser(user),
       player: player.toObject(),
     })

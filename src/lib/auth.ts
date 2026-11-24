@@ -41,11 +41,13 @@ export function isSecureRequest(req?: Request): boolean {
 }
 
 export function clearAdminSessionCookie(res: Response, req?: Request) {
+  const cookieDomain = process.env.COOKIE_DOMAIN?.trim() || undefined
   res.clearCookie(ADMIN_COOKIE, {
     httpOnly: true,
     sameSite: 'lax',
     secure: isSecureRequest(req),
     path: '/',
+    ...(cookieDomain ? { domain: cookieDomain } : {}),
   })
 }
 

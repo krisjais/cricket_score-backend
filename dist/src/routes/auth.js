@@ -8,14 +8,16 @@ const api_utils_1 = require("../lib/api-utils");
 const router = (0, express_1.Router)();
 async function issueAdminLoginSession(req, res, admin) {
     const token = await (0, auth_1.createSessionToken)(admin.id, admin.username);
+    const cookieDomain = process.env.COOKIE_DOMAIN?.trim() || undefined;
     res.cookie(auth_1.ADMIN_COOKIE, token, {
         httpOnly: true,
         sameSite: 'lax',
         secure: (0, auth_1.isSecureRequest)(req),
         path: '/',
         maxAge: auth_1.SESSION_DAYS * 24 * 60 * 60 * 1000,
+        ...(cookieDomain ? { domain: cookieDomain } : {}),
     });
-    return { username: admin.username };
+    return { username: admin.username, token };
 }
 router.post('/login', async (req, res) => {
     const { username, password } = req.body ?? {};

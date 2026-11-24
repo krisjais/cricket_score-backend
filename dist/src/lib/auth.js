@@ -80,11 +80,13 @@ function isSecureRequest(req) {
     return Boolean(req.secure || proto?.split(',')[0]?.trim() === 'https');
 }
 function clearAdminSessionCookie(res, req) {
+    const cookieDomain = process.env.COOKIE_DOMAIN?.trim() || undefined;
     res.clearCookie(exports.ADMIN_COOKIE, {
         httpOnly: true,
         sameSite: 'lax',
         secure: isSecureRequest(req),
         path: '/',
+        ...(cookieDomain ? { domain: cookieDomain } : {}),
     });
 }
 async function createSessionToken(adminId, username) {

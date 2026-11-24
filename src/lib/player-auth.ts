@@ -357,11 +357,13 @@ export async function issuePlayerAuthCookies(
     userAgent: req?.headers['user-agent']?.slice(0, 240) ?? null,
   })
 
+  const cookieDomain = process.env.COOKIE_DOMAIN?.trim() || undefined
   const cookieOpts = {
     httpOnly: true,
     sameSite: 'lax' as const,
     secure: isSecureRequest(req),
     path: '/',
+    ...(cookieDomain ? { domain: cookieDomain } : {}),
   }
 
   res.cookie(PLAYER_ACCESS_COOKIE, accessToken, {
@@ -377,7 +379,14 @@ export async function issuePlayerAuthCookies(
 }
 
 export function clearPlayerAuthCookies(res: Response, req?: Request) {
-  const opts = { httpOnly: true, sameSite: 'lax' as const, secure: isSecureRequest(req), path: '/' }
+  const cookieDomain = process.env.COOKIE_DOMAIN?.trim() || undefined
+  const opts = {
+    httpOnly: true,
+    sameSite: 'lax' as const,
+    secure: isSecureRequest(req),
+    path: '/',
+    ...(cookieDomain ? { domain: cookieDomain } : {}),
+  }
   res.clearCookie(PLAYER_ACCESS_COOKIE, opts)
   res.clearCookie(PLAYER_REFRESH_COOKIE, opts)
 }

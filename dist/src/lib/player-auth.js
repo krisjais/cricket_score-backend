@@ -317,11 +317,13 @@ async function issuePlayerAuthCookies(res, user, player, req) {
         revokedAt: null,
         userAgent: req?.headers['user-agent']?.slice(0, 240) ?? null,
     });
+    const cookieDomain = process.env.COOKIE_DOMAIN?.trim() || undefined;
     const cookieOpts = {
         httpOnly: true,
         sameSite: 'lax',
         secure: (0, auth_1.isSecureRequest)(req),
         path: '/',
+        ...(cookieDomain ? { domain: cookieDomain } : {}),
     };
     res.cookie(exports.PLAYER_ACCESS_COOKIE, accessToken, {
         ...cookieOpts,
@@ -334,7 +336,14 @@ async function issuePlayerAuthCookies(res, user, player, req) {
     return { accessToken };
 }
 function clearPlayerAuthCookies(res, req) {
-    const opts = { httpOnly: true, sameSite: 'lax', secure: (0, auth_1.isSecureRequest)(req), path: '/' };
+    const cookieDomain = process.env.COOKIE_DOMAIN?.trim() || undefined;
+    const opts = {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: (0, auth_1.isSecureRequest)(req),
+        path: '/',
+        ...(cookieDomain ? { domain: cookieDomain } : {}),
+    };
     res.clearCookie(exports.PLAYER_ACCESS_COOKIE, opts);
     res.clearCookie(exports.PLAYER_REFRESH_COOKIE, opts);
 }

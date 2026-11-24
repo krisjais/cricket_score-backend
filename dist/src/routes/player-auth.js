@@ -420,9 +420,10 @@ router.post('/refresh', async (req, res) => {
         // Rotate refresh token
         tokenDoc.revokedAt = new Date();
         await tokenDoc.save();
-        await (0, player_auth_1.issuePlayerAuthCookies)(res, user, player, req);
+        const { accessToken } = await (0, player_auth_1.issuePlayerAuthCookies)(res, user, player, req);
         return (0, api_utils_1.sendOk)(res, {
             refreshed: true,
+            accessToken,
             user: (0, player_auth_1.sanitizePlayerUser)(user),
             player: player.toObject(),
         });

@@ -27,6 +27,7 @@ async function issueAdminLoginSession(
   admin: { id: string; username: string }
 ) {
   const token = await createSessionToken(admin.id, admin.username)
+  const cookieDomain = process.env.COOKIE_DOMAIN?.trim() || undefined
 
   res.cookie(ADMIN_COOKIE, token, {
     httpOnly: true,
@@ -34,9 +35,10 @@ async function issueAdminLoginSession(
     secure: isSecureRequest(req),
     path: '/',
     maxAge: SESSION_DAYS * 24 * 60 * 60 * 1000,
+    ...(cookieDomain ? { domain: cookieDomain } : {}),
   })
 
-  return { username: admin.username }
+  return { username: admin.username, token }
 }
 
 router.post('/login', async (req, res) => {
