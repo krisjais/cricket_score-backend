@@ -345,6 +345,55 @@ router.post('/admin/remove', async (req, res) => {
         return (0, api_utils_1.sendFail)(res, err?.message || 'Failed to remove captaincy', 500);
     }
 });
+// DELETE /api/captains/admin/assignments/:id - Permanently delete a captaincy assignment
+router.delete('/admin/assignments/:id', async (req, res) => {
+    const session = await (0, auth_1.requireAdmin)(req);
+    if (!session)
+        return (0, api_utils_1.unauthorized)(res);
+    try {
+        await (0, db_1.connectDB)();
+        const { id } = req.params;
+        if (!id)
+            return (0, api_utils_1.sendFail)(res, 'Assignment ID is required', 400);
+        const assignment = await db_1.CaptaincyAssignment.findById(id);
+        if (!assignment)
+            return (0, api_utils_1.sendFail)(res, 'Captaincy assignment not found', 404);
+        // If deleting an active assignment, reset squad designation
+        if (assignment.status === 'active') {
+            await db_1.TeamMembership.updateOne({ seasonId: assignment.seasonId, teamId: assignment.teamId, playerId: assignment.playerId }, { $set: { designation: 'PLAYER' } });
+        }
+        await db_1.CaptaincyAssignment.deleteOne({ _id: assignment._id });
+        await db_1.CaptaincyAuditLog.deleteMany({ assignmentId: String(assignment._id) });
+        return (0, api_utils_1.sendOk)(res, { success: true, deletedId: id });
+    }
+    catch (err) {
+        return (0, api_utils_1.sendFail)(res, err?.message || 'Failed to delete captaincy assignment', 500);
+    }
+});
+// POST /api/captains/admin/delete - Alternative POST endpoint for deleting assignment
+router.post('/admin/delete', async (req, res) => {
+    const session = await (0, auth_1.requireAdmin)(req);
+    if (!session)
+        return (0, api_utils_1.unauthorized)(res);
+    try {
+        await (0, db_1.connectDB)();
+        const assignmentId = req.body?.assignmentId || req.body?.id;
+        if (!assignmentId)
+            return (0, api_utils_1.sendFail)(res, 'assignmentId is required', 400);
+        const assignment = await db_1.CaptaincyAssignment.findById(assignmentId);
+        if (!assignment)
+            return (0, api_utils_1.sendFail)(res, 'Captaincy assignment not found', 404);
+        if (assignment.status === 'active') {
+            await db_1.TeamMembership.updateOne({ seasonId: assignment.seasonId, teamId: assignment.teamId, playerId: assignment.playerId }, { $set: { designation: 'PLAYER' } });
+        }
+        await db_1.CaptaincyAssignment.deleteOne({ _id: assignment._id });
+        await db_1.CaptaincyAuditLog.deleteMany({ assignmentId: String(assignment._id) });
+        return (0, api_utils_1.sendOk)(res, { success: true, deletedId: assignmentId });
+    }
+    catch (err) {
+        return (0, api_utils_1.sendFail)(res, err?.message || 'Failed to delete captaincy assignment', 500);
+    }
+});
 // GET /api/captains/admin/audit-logs - View audit history
 router.get('/admin/audit-logs', async (req, res) => {
     const session = await (0, auth_1.requireAdmin)(req);
